@@ -93,6 +93,9 @@ module HscTypes (
         -- * Breakpoints
         ModBreaks (..), BreakIndex, emptyModBreaks,
 
+        -- * Cost Centres collected for GHCi
+        ModCCs (..), emptyModCCs,
+
         -- * Vectorisation information
         VectInfo(..), IfaceVectInfo(..), noVectInfo, plusVectInfo,
         noIfaceVectInfo, isNoIfaceVectInfo,
@@ -108,6 +111,8 @@ module HscTypes (
         SourceError, GhcApiError, mkSrcErr, srcErrorMessages, mkApiErr,
         throwOneError, handleSourceError,
         handleFlagWarnings, printOrThrowWarnings,
+
+        
     ) where
 
 #include "HsVersions.h"
@@ -169,9 +174,14 @@ import Data.IORef
 import Data.Time
 import Data.Word
 import Data.Typeable    ( Typeable )
+import Data.Map         (Map)
+import qualified Data.Map as Map
 import Exception
 import System.FilePath
 
+--imports for ModCCs: collected cost centres for GHCi
+import Foreign.Ptr      (Ptr)
+import CostCentre
 -- -----------------------------------------------------------------------------
 -- Source Errors
 
@@ -833,6 +843,7 @@ data ModGuts
         mg_anns      :: [Annotation],    -- ^ Annotations declared in this module
         mg_hpc_info  :: !HpcInfo,        -- ^ Coverage tick boxes in the module
         mg_modBreaks :: !ModBreaks,      -- ^ Breakpoints for the module
+        mg_modCCs    :: !ModCCs,         -- ^ costcentres for the module
         mg_vect_decls:: ![CoreVect],     -- ^ Vectorisation declarations in this module
                                          --   (produced by desugarer & consumed by vectoriser)
         mg_vect_info :: !VectInfo,       -- ^ Pool of vectorised declarations in the module
@@ -892,7 +903,8 @@ data CgGuts
         cg_dep_pkgs  :: ![PackageId],    -- ^ Dependent packages, used to
                                          -- generate #includes for C code gen
         cg_hpc_info  :: !HpcInfo,        -- ^ Program coverage tick box information
-        cg_modBreaks :: !ModBreaks       -- ^ Module breakpoints
+        cg_modBreaks :: !ModBreaks,      -- ^ Module breakpoints
+        cg_modCCs    :: !ModCCs          -- ^ Module Cost Centres  
     }
 
 -----------------------------------
@@ -2246,6 +2258,8 @@ data ModBreaks
         -- ^ An array giving the names of the declarations enclosing each breakpoint.
    }
 
+
+
 -- | Construct an empty ModBreaks
 emptyModBreaks :: ModBreaks
 emptyModBreaks = ModBreaks
@@ -2255,5 +2269,14 @@ emptyModBreaks = ModBreaks
    , modBreaks_vars  = array (0,-1) []
    , modBreaks_decls = array (0,-1) []
    }
+
+
+--COST CENTRE SUPPORT
+
+
+
 \end{code}
+
+
+
 

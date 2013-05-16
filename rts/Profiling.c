@@ -443,6 +443,9 @@ ccsSetSelected (CostCentreStack *ccs)
     return;
 }
 
+
+
+
 /* -----------------------------------------------------------------------------
    Cost-centre stack manipulation
    -------------------------------------------------------------------------- */
@@ -1145,5 +1148,7 @@ debugCCS( CostCentreStack *ccs )
     debugBelch(">");
 }
 #endif /* DEBUG */
+
+
 
 #endif /* PROFILING */

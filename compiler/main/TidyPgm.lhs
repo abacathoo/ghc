@@ -303,6 +303,7 @@ tidyProgram hsc_env  (ModGuts { mg_module    = mod
                               , mg_foreign   = foreign_stubs
                               , mg_hpc_info  = hpc_info
                               , mg_modBreaks = modBreaks
+                              , mg_modCCs    = modCCs
                               })
 
   = do  { let { dflags     = hsc_dflags hsc_env
@@ -388,7 +389,8 @@ tidyProgram hsc_env  (ModGuts { mg_module    = mod
                            cg_foreign  = foreign_stubs,
                            cg_dep_pkgs = map fst $ dep_pkgs deps,
                            cg_hpc_info = hpc_info,
-                           cg_modBreaks = modBreaks },
+                           cg_modBreaks = modBreaks,
+                           cg_modCCs = modCCs },
 
                    ModDetails { md_types     = tidy_type_env,
                                 md_rules     = tidy_rules,

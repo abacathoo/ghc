@@ -26,7 +26,11 @@ module CostCentre (
         costCentreUserName, costCentreUserNameFS,
         costCentreSrcSpan,
 
-	cmpCostCentre	-- used for removing dups in a list
+	cmpCostCentre,	-- used for removing dups in a list
+
+        --ccSizes, toCCostCentre --Foreign stuff to get cost to
+                                            --C land for GHCi
+        ModCCs, emptyModCCs         
     ) where
 
 import Var
@@ -38,10 +42,15 @@ import FastTypes
 import SrcLoc
 import FastString
 import Util
-
+import Foreign
+import Foreign.C.String
 import Data.Data
+import DynFlags
 
 -----------------------------------------------------------------------------
+
+  
+
 -- Cost Centres
 
 -- | A Cost Centre is a single @{-# SCC #-}@ annotation.
@@ -82,6 +91,43 @@ instance Eq CostCentre where
 
 instance Ord CostCentre where
 	compare = cmpCostCentre
+
+ccSizes :: [Int] 
+ccSizes =       [sizeOf (undefined :: Int),
+                  sizeOf (undefined :: CString),
+                  sizeOf (undefined :: CString),
+                  sizeOf (undefined :: CString),
+                  sizeOf (undefined :: Bool)
+                 ]
+instance Storable CostCentre where
+  sizeOf _ = sum ccSizes
+  alignment _ = sizeOf (undefined::Ptr ())
+
+  poke ptr cc@(NormalCC key (name::FastString) (mod::Module) (loc::SrcSpan) _caf) = do
+    (t_name::CString) <- newCString $ costCentreUserName cc
+    (t_mod::CString) <-  newCString "Main" -- show $ pprModule mod
+    (t_loc::CString) <-  newCString $ showUserSpan True loc
+
+    pokeByteOff ptr (sum $ take 0 ccSizes) $ key
+    pokeByteOff ptr (sum $ take 1 ccSizes) $ t_name
+    pokeByteOff ptr (sum $ take 2 ccSizes) $ t_mod
+    pokeByteOff ptr (sum $ take 3 ccSizes) $ t_loc
+    pokeByteOff ptr (sum $ take 4 ccSizes) $ isCafCC cc
+
+
+
+
+  poke _ AllCafsCC{} = error "toStorable: should never try to store AllCafsCC"
+
+  peek = error "CostCentre.CCostCentre.peek: not implemented"
+
+
+type ModCCs = [CostCentre]
+
+
+emptyModCCs :: ModCCs
+emptyModCCs = []
+
 
 cmpCostCentre :: CostCentre -> CostCentre -> Ordering
 

@@ -70,6 +70,7 @@ disInstr ( StgBCO *bco, int pc )
          debugBelch (" %d ", instrs[pc+1]); printPtr( ptrs[instrs[pc+2]] ); debugBelch("\n" );
          pc += 3;
          break;
+
       case bci_SWIZZLE:
          debugBelch("SWIZZLE stkoff %d by %d\n",
                          instrs[pc], (signed int)instrs[pc+1]);
@@ -265,7 +266,11 @@ disInstr ( StgBCO *bco, int pc )
       case bci_RETURN_V:
          debugBelch("RETURN_V\n" );
 	 break;
-
+      case bci_SET_COST_CENTRE:
+	debugBelch("SET_COST_CENTRE\n" );
+	debugBelch("CostCentre: %d\n", literals[instrs[pc]]);
+        pc++;
+	break;
       default:
          barf("disInstr: unknown opcode %u", (unsigned int) instr);
    }
@@ -285,13 +290,17 @@ void disassemble( StgBCO *bco )
    StgMutArrPtrs* ptrs      = bco->ptrs;
    nat            nbcs      = (int)(bco->instrs->bytes / sizeof(StgWord16));
    nat            pc        = 1;
+   nbcs-=2;
 
    debugBelch("BCO\n" );
    pc = 0;
-   while (pc <= nbcs) {
+   /*
+      while (pc <= nbcs) {
       debugBelch("\t%2d:  ", pc );
       pc = disInstr ( bco, pc );
+   
    }
+   */
 
    debugBelch("INSTRS:\n   " );
    j = 16;
@@ -312,7 +321,7 @@ void disassemble( StgBCO *bco )
    debugBelch("\n");
 
    debugBelch("\n");
-   ASSERT(pc == nbcs+1);
+   //   ASSERT(pc == nbcs+1);
 }
 
 #endif /* DEBUG */

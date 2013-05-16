@@ -58,6 +58,7 @@ import Foreign.C
 import Control.Monad
 import Data.Char
 
+
 import UniqSupply
 import BreakArray
 import Data.Maybe
@@ -78,15 +79,16 @@ byteCodeGen :: DynFlags
             -> CoreProgram
             -> [TyCon]
             -> ModBreaks
+            -> ModCCs
             -> IO CompiledByteCode
-byteCodeGen dflags this_mod binds tycs modBreaks
+byteCodeGen dflags this_mod binds tycs modBreaks modCCs
    = do showPass dflags "ByteCodeGen"
 
         let flatBinds = [ (bndr, freeVars rhs)
                         | (bndr, rhs) <- flattenBinds binds]
 
         us <- mkSplitUniqSupply 'y'
-        (BcM_State _dflags _us _this_mod _final_ctr mallocd _, proto_bcos)
+        (BcM_State _dflags _us _this_mod _final_ctr mallocd _modBreaks, proto_bcos)
            <- runBc dflags us this_mod modBreaks (mapM schemeTopBind flatBinds)
 
         when (notNull mallocd)
@@ -95,7 +97,7 @@ byteCodeGen dflags this_mod binds tycs modBreaks
         dumpIfSet_dyn dflags Opt_D_dump_BCOs
            "Proto-BCOs" (vcat (intersperse (char ' ') (map ppr proto_bcos)))
 
-        assembleBCOs dflags proto_bcos tycs
+        assembleBCOs dflags proto_bcos tycs modCCs
 
 -- -----------------------------------------------------------------------------
 -- Generating byte code for an expression
@@ -117,7 +119,7 @@ coreExprToBCOs dflags this_mod expr
       -- the uniques are needed to generate fresh variables when we introduce new
       -- let bindings for ticked expressions
       us <- mkSplitUniqSupply 'y'
-      (BcM_State _dflags _us _this_mod _final_ctr mallocd _ , proto_bco)
+      (BcM_State _dflags _us _this_mod _final_ctr mallocd _modBreaks, proto_bco)
          <- runBc dflags us this_mod emptyModBreaks $
               schemeTopBind (invented_id, freeVars expr)
 
@@ -126,7 +128,7 @@ coreExprToBCOs dflags this_mod expr
 
       dumpIfSet_dyn dflags Opt_D_dump_BCOs "Proto-BCOs" (ppr proto_bco)
 
-      assembleBCO dflags proto_bco
+      assembleBCO dflags  (error "no profiling ticks for interactives") proto_bco
 
 
 -- -----------------------------------------------------------------------------
@@ -487,8 +489,14 @@ schemeE d s p exp@(AnnTick (Breakpoint _id _fvs) _rhs)
          fvs  = exprFreeVars exp'
          ty   = exprType exp'
 
+schemeE d s p (AnnTick (ProfNote cc _ _) (_annotation,expr)) = do
+  rest_code <- schemeE d s p expr
+  let scc_code = SET_COST_CENTRE cc
+  return (scc_code `consOL` rest_code)
+
 -- ignore other kinds of tick
 schemeE d s p (AnnTick _ (_, rhs)) = schemeE d s p rhs
+
 
 schemeE d s p (AnnCase (_,scrut) _ _ []) = schemeE d s p scrut
         -- no alts: scrut is guaranteed to diverge
@@ -1508,6 +1516,7 @@ bcView (AnnCast (_,e) _)             = Just e
 bcView (AnnLam v (_,e)) | isTyVar v  = Just e
 bcView (AnnApp (_,e) (_, AnnType _)) = Just e
 bcView (AnnTick Breakpoint{} _)      = Nothing
+bcView (AnnTick ProfNote{} _)        = Nothing
 bcView (AnnTick _other_tick (_,e))   = Just e
 bcView _                             = Nothing
 
@@ -1554,6 +1563,7 @@ data BcM_State
         , malloced  :: [BcPtr]           -- thunks malloced for current BCO
                                          -- Should be free()d when it is GCd
         , breakArray :: BreakArray       -- array of breakpoint flags
+
         }
 
 newtype BcM r = BcM (BcM_State -> IO (BcM_State, r))
@@ -1612,6 +1622,15 @@ getLabelBc
                     when (nl == maxBound) $
                         panic "getLabelBc: Ran out of labels"
                     return (st{nextlabel = nl + 1}, nl)
+
+-----------------------------------------------------------------------------------------------------------------------------------
+-- getPtrFromCostCentre :: Int -> BcM (Ptr CCostCentre)                                                                          --
+-- getPtrFromCostCentre ccId = BcM $ \st ->                                                                                          --
+--   let errString = "getPtrFromCostCentre: lookup failed\n" ++ "ccId: " ++ show ccId ++ "\n map: " ++ show (modCCs_env $ modCCs st) --
+--       pccc = fromMaybe (error errString) $                                                                                        --
+--                        Map.lookup ccId (modCCs_env $ modCCs st)                                                                   --
+--   in return $ (st, pccc)                                                                                                          --
+-----------------------------------------------------------------------------------------------------------------------------------
 
 getLabelsBc :: Word16 -> BcM [Word16]
 getLabelsBc n

@@ -26,7 +26,7 @@
 #include "sm/GC.h" // for gcWorkerThread()
 #include "STM.h"
 #include "RtsUtils.h"
-
+#include "LwtProfiling.h"
 #include <string.h>
 
 // one global capability, this is the Capability for non-threaded
@@ -281,6 +281,8 @@ initCapability( Capability *cap, nat i )
 #else
     cap->r.rCCCS = NULL;
 #endif
+    cap->r.rCLCCS = &LCCS_MAIN; //Initialize lightweight cost centre stack to MAIN
+    
 
     traceCapCreate(cap);
     traceCapsetAssignCap(CAPSET_OSPROCESS_DEFAULT, i);

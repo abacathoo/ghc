@@ -35,6 +35,8 @@ import DataCon
 import VarSet
 import PrimOp
 import SMRep
+import SrcLoc
+import CostCentre
 
 import Module (Module)
 import GHC.Exts
@@ -152,6 +154,9 @@ data BCInstr
    -- Breakpoints 
    | BRK_FUN          (MutableByteArray# RealWorld) Word16 BreakInfo
 
+   -- CostCenterStack stuff
+   | SET_COST_CENTRE  CostCentre
+
 data BreakInfo 
    = BreakInfo
    { breakInfo_module :: Module
@@ -261,13 +266,14 @@ instance Outputable BCInstr where
                                                <+> (if int == 1
                                                     then text "(interruptible)"
                                                     else empty)
+
    ppr (SWIZZLE stkoff n)    = text "SWIZZLE " <+> text "stkoff" <+> ppr stkoff
                                                <+> text "by" <+> ppr n
    ppr ENTER                 = text "ENTER"
    ppr RETURN		     = text "RETURN"
    ppr (RETURN_UBX pk)       = text "RETURN_UBX  " <+> ppr pk
    ppr (BRK_FUN _breakArray index info) = text "BRK_FUN" <+> text "<array>" <+> ppr index <+> ppr info
-
+   ppr (SET_COST_CENTRE cc)  = text "SET_COST_CENTRE " <+> pprCostCentreCore cc
 -- -----------------------------------------------------------------------------
 -- The stack use, in words, of each bytecode insn.  These _must_ be
 -- correct, or overestimates of reality, to be safe.
@@ -326,6 +332,7 @@ bciStackUse RETURN_UBX{}	  = 1
 bciStackUse CCALL{} 		  = 0
 bciStackUse SWIZZLE{}    	  = 0
 bciStackUse BRK_FUN{}    	  = 0
+bciStackUse SET_COST_CENTRE{}     = 0
 
 -- These insns actually reduce stack use, but we need the high-tide level,
 -- so can't use this info.  Not that it matters much.

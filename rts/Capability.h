@@ -118,7 +118,6 @@ struct Capability_ {
     Message *inbox;
 
     SparkPool *sparks;
-
     // Stats on spark creation/conversion
     SparkCounters spark_stats;
 #endif

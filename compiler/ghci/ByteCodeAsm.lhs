@@ -46,6 +46,7 @@ import Data.Array.Base  ( UArray(..) )
 import Data.Array.Unsafe( castSTUArray )
 
 import Foreign
+import qualified Foreign.Marshal.Array as FArray
 import Data.Char        ( ord )
 import Data.List
 import Data.Map (Map)
@@ -53,6 +54,9 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
 import GHC.Base         ( ByteArray#, MutableByteArray#, RealWorld )
+
+import CostCentre
+
 
 -- -----------------------------------------------------------------------------
 -- Unlinked BCOs
@@ -120,16 +124,19 @@ instance Outputable UnlinkedBCO where
 -- bytecode address in this BCO.
 
 -- Top level assembler fn.
-assembleBCOs :: DynFlags -> [ProtoBCO Name] -> [TyCon] -> IO CompiledByteCode
-assembleBCOs dflags proto_bcos tycons
+assembleBCOs :: DynFlags -> [ProtoBCO Name] -> [TyCon] -> ModCCs -> IO CompiledByteCode
+assembleBCOs dflags proto_bcos tycons modCCs
   = do  itblenv <- mkITbls dflags tycons
-        bcos    <- mapM (assembleBCO dflags) proto_bcos
+--        putStrLn("ASSEMBLING: ")
+--        mapM (\cc-> putStrLn $ showSDoc dflags $ pprCostCentreCore cc) modCCs
+        ccEnv <- mkCCArray dflags modCCs
+        bcos    <- mapM (assembleBCO dflags ccEnv) proto_bcos
         return (ByteCode bcos itblenv)
 
-assembleBCO :: DynFlags -> ProtoBCO Name -> IO UnlinkedBCO
-assembleBCO dflags (ProtoBCO nm instrs bitmap bsize arity _origin _malloced) = do
+assembleBCO :: DynFlags -> CCEnv -> ProtoBCO Name -> IO UnlinkedBCO
+assembleBCO dflags ccEnv (ProtoBCO nm instrs bitmap bsize arity _origin _malloced) = do
   -- pass 1: collect up the offsets of the local labels.
-  let asm = mapM_ (assembleI dflags) instrs
+  let asm = mapM_ (assembleI dflags ccEnv) instrs
 
       initial_offset = 0
 
@@ -175,6 +182,23 @@ assembleBCO dflags (ProtoBCO nm instrs bitmap bsize arity _origin _malloced) = d
   -- when (notNull malloced) (addFinalizer ul_bco (mapM_ zonk malloced))
 
   return ul_bco
+
+type CCEnv = Map Int (Ptr CostCentre)
+
+mkCCArray :: DynFlags -> ModCCs -> IO CCEnv
+mkCCArray dynflags ccs = do
+  pccs <- FArray.newArray ccs
+  let env = Map.fromList $ zip (map cc_key ccs) $ alignedCccPointers pccs
+--  putStrLn $ "ByteCodeAsm.mkCCArray" ++ (show env)
+  return env
+    where
+      align = alignment (undefined::Ptr CostCentre)
+      size  = sizeOf    (undefined::CostCentre)
+      alignedCccPointers :: Ptr CostCentre -> [Ptr CostCentre]
+      alignedCccPointers p = (alignPtr p align) : (alignedCccPointers $ p `plusPtr` size)
+
+
+
 
 mkBitmapArray :: DynFlags -> Word16 -> [StgWord] -> UArray Int StgWord
 mkBitmapArray dflags bsize bitmap
@@ -331,9 +355,10 @@ largeArg16s dflags | wORD_SIZE_IN_BITS dflags == 64 = 4
                    | otherwise                      = 2
 
 assembleI :: DynFlags
+          -> CCEnv
           -> BCInstr
           -> Assembler ()
-assembleI dflags i = case i of
+assembleI dflags ccEnv i = case i of
   STKCHECK n               -> emit bci_STKCHECK [Op n]
   PUSH_L o1                -> emit bci_PUSH_L [SmallOp o1]
   PUSH_LL o1 o2            -> emit bci_PUSH_LL [SmallOp o1, SmallOp o2]
@@ -342,14 +367,14 @@ assembleI dflags i = case i of
                                  emit bci_PUSH_G [Op p]
   PUSH_PRIMOP op           -> do p <- ptr (BCOPtrPrimOp op)
                                  emit bci_PUSH_G [Op p]
-  PUSH_BCO proto           -> do let ul_bco = assembleBCO dflags proto
+  PUSH_BCO proto           -> do let ul_bco = assembleBCO dflags ccEnv proto
                                  p <- ioptr (liftM BCOPtrBCO ul_bco)
                                  emit bci_PUSH_G [Op p]
-  PUSH_ALTS proto          -> do let ul_bco = assembleBCO dflags proto
+  PUSH_ALTS proto          -> do let ul_bco = assembleBCO dflags ccEnv proto
                                  p <- ioptr (liftM BCOPtrBCO ul_bco)
                                  emit bci_PUSH_ALTS [Op p]
   PUSH_ALTS_UNLIFTED proto pk
-                           -> do let ul_bco = assembleBCO dflags proto
+                           -> do let ul_bco = assembleBCO dflags ccEnv proto
                                  p <- ioptr (liftM BCOPtrBCO ul_bco)
                                  emit (push_alts pk) [Op p]
   PUSH_UBX (Left lit) nws  -> do np <- literal lit
@@ -408,6 +433,11 @@ assembleI dflags i = case i of
   BRK_FUN array index info -> do p1 <- ptr (BCOPtrArray array)
                                  p2 <- ptr (BCOPtrBreakInfo info)
                                  emit bci_BRK_FUN [Op p1, SmallOp index, Op p2]
+
+  SET_COST_CENTRE cc       -> do let ccp = fromMaybe (error "assembleI: could not find CC pointer") 
+                                           $ Map.lookup (cc_key cc) ccEnv
+                                 np <- addr $ castPtr ccp
+                                 emit bci_SET_COST_CENTRE [Op np]
 
   where
     literal (MachLabel fs (Just sz) _)

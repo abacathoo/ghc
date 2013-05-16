@@ -9,6 +9,9 @@
 #include "RtsAPI.h"
 #include "rts/Bytecodes.h"
 
+
+
+
 // internal headers
 #include "sm/Storage.h"
 #include "sm/Sanity.h"
@@ -22,6 +25,8 @@
 #include "Interpreter.h"
 #include "ThreadPaused.h"
 #include "Threads.h"
+#include "LwtProfiling.h"
+#include "Profiling.h"
 
 #include <string.h>     /* for memcpy */
 #ifdef HAVE_ERRNO_H
@@ -125,11 +130,11 @@ int it_ofreq[27];
 int it_oofreq[27][27];
 int it_lastopc;
 
-
 #define INTERP_TICK(n) (n)++
 
 void interp_startup ( void )
 {
+   barf("knew this was never run");
    int i, j;
    it_retto_BCO = it_retto_UPDATE = it_retto_other = 0;
    it_total_entries = it_total_unknown_entries = 0;
@@ -141,6 +146,8 @@ void interp_startup ( void )
      for (j = 0; j < 27; j++)
         it_oofreq[i][j] = 0;
    it_lastopc = 0;
+   //start lwt profiling
+   initLwtProfiling();
 }
 
 void interp_shutdown ( void )
@@ -333,6 +340,9 @@ eval_obj:
 	    Sp[0] = (W_)&stg_enter_info;
 	    RETURN_TO_SCHEDULER(ThreadInterpret, StackOverflow);
 	}
+
+        enterFunLwtCCS(cap, ap->LCCS);
+
 	
 	/* Ok; we're safe.  Party on.  Push an update frame. */
 	Sp -= sizeofW(StgUpdateFrame);
@@ -351,6 +361,8 @@ eval_obj:
 
 	obj = UNTAG_CLOSURE((StgClosure*)ap->fun);
 	ASSERT(get_itbl(obj)->type == BCO);
+
+
 	goto run_BCO_fun;
     }
 
@@ -805,7 +817,7 @@ run_BCO:
 		 //debugBelch("-- END stack\n\n");
 		 //}
                  debugBelch("Sp = %p   pc = %-4d ", Sp, bciPtr);
-		 disInstr(bco,bciPtr);
+		 //disInstr(bco,bciPtr);
 		 if (0) { int i;
 		 debugBelch("\n");
 		 for (i = 8; i >= 0; i--) {
@@ -867,6 +879,10 @@ run_BCO:
                if (rts_stop_next_breakpoint == rtsTrue || 
                    breakPoints->payload[arg2_array_index] == rtsTrue)
                {
+ 		  //save current cost centre stack in case user wants stack trace
+                  savedCLCCS = cap->r.rCLCCS;
+		    //TODO: save free vars too
+
                   // make sure we don't automatically stop at the
                   // next breakpoint
                   rts_stop_next_breakpoint = rtsFalse;
@@ -922,6 +938,24 @@ run_BCO:
 
             // continue normal execution of the byte code instructions
 	    goto nextInsn;
+        }
+        
+        //should really be PUSH_COST_CENTRE
+        //but we wouldn't want anyone to think that
+        //this pushes onto the real stack
+        case bci_SET_COST_CENTRE: {
+	     int arg_cost_centre;
+             LwtCostCentre* newLCC;
+             LwtCostCentreStack* new_CLCCS;
+	     arg_cost_centre = BCO_GET_LARGE_ARG;
+             newLCC = (LwtCostCentre*) BCO_LIT(arg_cost_centre);
+             //debugCC(newCC);
+             new_CLCCS = pushLwtCostCentre(cap->r.rCLCCS, newLCC);
+	     cap->r.rCLCCS = new_CLCCS;
+             IF_DEBUG(interpreter,
+                      debugLwtCCS(new_CLCCS););
+             //debugBelch("BCISETCOSTCENTRE");
+             goto nextInsn;
         }
 
 	case bci_STKCHECK: {
@@ -1128,6 +1162,7 @@ run_BCO:
 	    StgAP* ap = (StgAP*)Sp[stkoff];
 	    ASSERT((int)ap->n_args == n_payload);
 	    ap->fun = (StgClosure*)Sp[0];
+            ap->LCCS = cap->r.rCLCCS;
 	    
 	    // The function should be a BCO, and its bitmap should
 	    // cover the payload of the AP correctly.
@@ -1151,7 +1186,7 @@ run_BCO:
 	    StgPAP* pap = (StgPAP*)Sp[stkoff];
 	    ASSERT((int)pap->n_args == n_payload);
 	    pap->fun = (StgClosure*)Sp[0];
-	    
+	    pap->LCCS = cap->r.rCLCCS;
 	    // The function should be a BCO
 	    ASSERT(get_itbl(pap->fun)->type == BCO);
 	    

@@ -184,7 +184,8 @@ ghciCommands = [
   ("type",      keepGoing' typeOfExpr,          completeExpression),
   ("trace",     keepGoing traceCmd,             completeExpression),
   ("undef",     keepGoing undefineMacro,        completeMacro),
-  ("unset",     keepGoing unsetOptions,         completeSetOptions)
+  ("unset",     keepGoing unsetOptions,         completeSetOptions),
+  ("strace",    keepGoing sTrace,               completeIdentifier)
   ]
 
 
@@ -332,6 +333,7 @@ findEditor = do
 #endif
 
 foreign import ccall unsafe "rts_isProfiled" isProfiled :: IO CInt
+foreign import ccall unsafe "rts_initLwtProfiling" initLwtProfiling :: IO ()
 
 default_progname, default_prompt, default_prompt2, default_stop :: String
 default_progname = "<interactive>"
@@ -345,13 +347,15 @@ default_args = []
 interactiveUI :: GhciSettings -> [(FilePath, Maybe Phase)] -> Maybe [String]
               -> Ghc ()
 interactiveUI config srcs maybe_exprs = do
+
    -- although GHCi compiles with -prof, it is not usable: the byte-code
    -- compiler and interpreter don't work with profiling.  So we check for
    -- this up front and emit a helpful error message (#2197)
    i <- liftIO $ isProfiled
    when (i /= 0) $
      throwGhcException (InstallationError "GHCi cannot be used when compiled with -prof")
-
+   
+   liftIO $ initLwtProfiling
    -- HACK! If we happen to get into an infinite loop (eg the user
    -- types 'let x=x in x' at the prompt), then the thread will block
    -- on a blackhole, and become unreachable during GC.  The GC will
@@ -374,6 +378,8 @@ interactiveUI config srcs maybe_exprs = do
    let dflags' = (`xopt_set` Opt_ExtendedDefaultRules)
                . (`xopt_unset` Opt_MonomorphismRestriction)
                $ dflags
+--   let x = case profAuto dflags' of {ProfAutoAll->True; _->False}
+--   MASSERT(x)
    GHC.setInteractiveDynFlags dflags'
 
    liftIO $ when (isNothing maybe_exprs) $ do
@@ -2458,6 +2464,15 @@ allExposedModules dflags
 completeExpression = completeQuotedWord (Just '\\') "\"" listFiles
                         completeIdentifier
 
+
+
+-- -----------
+-- stack trace command
+foreign import ccall unsafe "rts_dumpCLCCS" cSTrace :: IO ()
+
+sTrace :: String -> GHCi ()
+sTrace "" = liftIO cSTrace
+sTrace arg = error "ok, try to trace an actual variable"
 
 -- -----------------------------------------------------------------------------
 -- commands for debugger

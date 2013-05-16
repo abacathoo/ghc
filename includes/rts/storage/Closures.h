@@ -96,6 +96,7 @@ typedef struct {
     StgHeader   header;
     StgHalfWord arity;		/* zero if it is an AP */
     StgHalfWord n_args;
+    LwtCostCentreStack * LCCS;
     StgClosure *fun;		/* really points to a fun */
     StgClosure *payload[FLEXIBLE_ARRAY];
 } StgPAP;
@@ -104,6 +105,7 @@ typedef struct {
     StgThunkHeader   header;
     StgHalfWord arity;		/* zero if it is an AP */
     StgHalfWord n_args;
+    LwtCostCentreStack * LCCS;
     StgClosure *fun;		/* really points to a fun */
     StgClosure *payload[FLEXIBLE_ARRAY];
 } StgAP;
@@ -111,6 +113,7 @@ typedef struct {
 typedef struct {
     StgThunkHeader   header;
     StgWord     size;                    /* number of words in payload */
+    LwtCostCentreStack * LCCS; 
     StgClosure *fun;
     StgClosure *payload[FLEXIBLE_ARRAY]; /* contains a chunk of *stack* */
 } StgAP_STACK;

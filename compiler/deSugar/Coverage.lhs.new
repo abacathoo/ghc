@@ -41,6 +41,11 @@ import Trace.Hpc.Util
 import BreakArray
 import Data.Map (Map)
 import qualified Data.Map as Map
+
+import Foreign
+
+
+
 \end{code}
 
 
@@ -63,23 +68,27 @@ addTicksToBinds
         -> IO (LHsBinds Id, HpcInfo, ModBreaks, ModCCs)
 
 addTicksToBinds dflags mod mod_loc exports tyCons binds
+-- Decide what sort of ticks to add
   | NoProfAuto <- profAuto dflags
-  , HscInterpreted <- hscTarget dflags = attb binds Breakpoints
-  | gopt Opt_Hpc dflags                = attb binds HpcTicks
-  | gopt Opt_SccProfilingOn dflags     = attb binds ProfNotes
- 
+  , HscInterpreted <- hscTarget dflags            = attb4 binds Breakpoints
+  | gopt Opt_Hpc dflags                           = attb4 binds HpcTicks
+  | gopt Opt_SccProfilingOn dflags                = attb4 binds ProfNotes
+
 -- Compiling for the interpreter, but profAuto =/= NoProfAuto, so we do two passes
 -- first annotate for profiling, then annotate for breakpoints
-
   | HscInterpreted <- hscTarget dflags = do       
-
-       (binds0, _, modBreaks,_) <- attb binds Breakpoints
-       (binds1, _, _, ccs) <- attb binds0 ProfNotes
-       return (binds1,emptyHpcInfo False,modBreaks,ccs)
-   | otherwise = error "addTicksToBinds: No way to annotate"
-   where
-     attb = addTicksToBinds' dflags mod mod_loc exports tyCons
-
+      (binds0, _, _, ccs) <- attb binds ProfNotes
+      (binds1, _, modBreaks,_) <- attb binds0 Breakpoints
+      modCCs <- mkModCCs dflags ccs 
+      return (binds1,emptyHpcInfo False,modBreaks,modCCs)
+  | otherwise = error "addTicksToBinds: No way to annotate"
+  where
+    attb = addTicksToBinds' dflags mod mod_loc exports tyCons
+    attb4 binds t = do
+      (a,b,c,ccs) <- attb binds t
+      cca <- mkModCCs dflags ccs
+      return (a,b,c,cca)
+                    
 
 addTicksToBinds'
         :: DynFlags
@@ -90,25 +99,21 @@ addTicksToBinds'
                                 -- hasn't set it), so we have to work from this set.
         -> [TyCon]              -- Type constructor in this module
         -> LHsBinds Id
-        -> TickishType
-        -> IO (LHsBinds Id, HpcInfo, ModBreaks, ModCCs)
-addTicksToBinds' dflags mod mod_loc exports tyCons binds tickishType = 
- case ml_hs_file mod_loc of
-   Nothing        -> return (binds, emptyHpcInfo False, emptyModBreaks, emptyModCCs)
-   Just orig_file -> do
+        -> TickishType          -- What sort of ticks to add
+        -> IO (LHsBinds Id, HpcInfo, ModBreaks, [CostCentre])
 
+addTicksToBinds' dflags mod mod_loc exports tyCons binds tickishType =
+ 
+ case ml_hs_file mod_loc of
+   Nothing        -> return (binds, emptyHpcInfo False, emptyModBreaks, [])
+   Just orig_file -> do
+     
      if "boot" `isSuffixOf` orig_file
-         then return (binds, emptyHpcInfo False, emptyModBreaks, emptyModCCs)
+         then return (binds, emptyHpcInfo False, emptyModBreaks, [])
          else do
 
      let  orig_file2 = guessSourceFile binds orig_file
-          densityFromTickishT Breakpoints = TickForBreakPoints
-          densityFromTickishT HpcTicks    = TickForCoverage
-          densityFromTickishT ProfNotes   
-            | ProfAutoAll     <- profAuto dflags   = TickAllFunctions
-            | ProfAutoTop     <- profAuto dflags   = TickTopFunctions
-            | ProfAutoExports <- profAuto dflags   = TickExportedFunctions
-            | ProfAutoCalls   <- profAuto dflags   = TickCallSites
+
           (binds1,_,st)
                  = unTM (addTickLHsBinds binds)
                    (TTE
@@ -121,27 +126,29 @@ addTicksToBinds' dflags mod mod_loc exports tyCons binds tickishType =
                       , blackList    = Map.fromList
                                           [ (getSrcSpan (tyConName tyCon),())
                                           | tyCon <- tyCons ]
-                      , density      = densityFromTickishT tickishType
+                      , density      = mkDensity dflags
                       , this_mod     = mod
                       , tickishType  = tickishType
+                            
                        })
                    (TT
                       { tickBoxCount = 0
                       , mixEntries   = []
-                      , costCentres = emptyModCCs
+                      , costCentres  = []
                       })
 
      let entries = reverse $ mixEntries st
-
+     
      let count = tickBoxCount st
+     let ccs = costCentres st
      hashNo <- writeMixEntries dflags mod count entries orig_file2
-     modBreaks <- mkModBreaks dflags count entries
+         modBreaks <- mkModBreaks dflags count entries
 
      when (dopt Opt_D_dump_ticked dflags) $
          log_action dflags dflags SevDump noSrcSpan defaultDumpStyle
              (pprLHsBinds binds1)
 
-     return (binds1, HpcInfo count hashNo, modBreaks, costCentres st)
+     return (binds1, HpcInfo count hashNo, modBreaks, ccs)
 
 
 guessSourceFile :: LHsBinds Id -> FilePath -> FilePath
@@ -172,6 +179,26 @@ mkModBreaks dflags count entries = do
                      }
   --
   return modBreaks
+
+
+mkModCCs :: DynFlags -> [CostCentre] -> IO ModCCs
+mkModCCs dflags ccs = do
+
+  mapM_ (\cc -> (putStrLn $ "Coverage.mkModCCs:\n" ++ (showSDoc dflags $ pprCostCentreCore cc))) ccs
+--  pcc <- mallocForeignPtrArray (length ccs)
+  (cccs :: [CCostCentre]) <- mapM (toCCostCentre dflags) ccs
+  pcccs <- newArray cccs
+  let env = Map.fromList $ zip (map cc_key ccs) $ alignedCccPointers pcccs
+  putStrLn $ "Coverage.mkModCCs" ++ (show env)
+  return $ ModCCs {
+    modCCs_env = env
+  }
+
+  where
+    align = alignment (undefined::Ptr CCostCentre)
+    size  = sizeOf    (undefined::CCostCentre)
+    alignedCccPointers :: Ptr CCostCentre -> [Ptr CCostCentre]
+    alignedCccPointers p = (alignPtr p align) : (alignedCccPointers $ p `plusPtr` size)
 
 
 writeMixEntries :: DynFlags -> Module -> Int -> [MixEntry_] -> FilePath -> IO Int
@@ -237,7 +264,7 @@ shouldTickBind  :: TickDensity
 
 shouldTickBind density top_lev exported simple_pat inline
  = case density of
-      TickForBreakPoints    -> (not simple_pat) && (not top_lev)
+      TickForBreakPoints    -> not simple_pat
         -- we never add breakpoints to simple pattern bindings
         -- (there's always a tick on the rhs anyway).
       TickAllFunctions      -> not inline
@@ -590,6 +617,10 @@ addTickHsExpr (HsTickPragma _ (L pos e0)) = do
     e2 <- allocTickBox (ExpBox False) False False pos $
                 addTickHsExpr e0
     return $ unLoc e2
+
+addTickHsExpr (HsTick tickish expr) =
+        liftM2 HsTick (return tickish) (addTickLHsExpr expr)
+
 addTickHsExpr (PArrSeq   ty arith_seq) =
         liftM2 PArrSeq
                 (return ty)
@@ -614,12 +645,9 @@ addTickHsExpr (HsWrap w e) =
                 (return w)
                 (addTickHsExpr e)       -- explicitly no tick on inside
 
-
 addTickHsExpr e@(HsType _) = return e
 addTickHsExpr (HsUnboundVar {}) = panic "addTickHsExpr.HsUnboundVar"
 
-addTickHsExpr (HsTick tickish expr) = 
-  liftM2 HsTick (return tickish) (addTickLHsExpr expr)
 
 -- Others dhould never happen in expression content.
 addTickHsExpr e  = pprPanic "addTickHsExpr" (ppr e)
@@ -953,7 +981,7 @@ liftL f (L loc a) = do
 \begin{code}
 data TickTransState = TT { tickBoxCount:: Int
                          , mixEntries  :: [MixEntry_]
-                         , costCentres :: ModCCs
+                         , costCentres :: [CostCentre]
                          }
 
 data TickTransEnv = TTE { fileName     :: FastString
@@ -1126,6 +1154,7 @@ mkTickish boxLabel countEntries topOnly pos fvs decl_path =
 
         cc_name | topOnly   = head decl_path
                 | otherwise = concat (intersperse "." decl_path)
+
         ccs = costCentres st
         cc = mkUserCC (mkFastString cc_name) (this_mod env) pos (mkCostCentreUnique c)
 

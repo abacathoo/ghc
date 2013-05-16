@@ -319,6 +319,7 @@ wanteds = concat
           ,fieldOffset Both "StgRegTable" "rHp"
           ,fieldOffset Both "StgRegTable" "rHpLim"
           ,fieldOffset Both "StgRegTable" "rCCCS"
+          ,fieldOffset Both "StgRegTable" "rCLCCS"
           ,fieldOffset Both "StgRegTable" "rCurrentTSO"
           ,fieldOffset Both "StgRegTable" "rCurrentNursery"
           ,fieldOffset Both "StgRegTable" "rHpAlloc"
@@ -353,10 +354,10 @@ wanteds = concat
           ,structFieldH Both "CostCentreStack" "mem_alloc"
           ,structFieldH Both "CostCentreStack" "scc_count"
           ,structField C     "CostCentreStack" "prevStack"
-
+          
           ,structField C "CostCentre" "ccID"
           ,structField C "CostCentre" "link"
-
+          
           ,structField C     "StgHeader" "info"
           ,structField_ Both "StgHeader_ccs" "StgHeader" "prof.ccs"
           ,structField_ Both "StgHeader_ldvw" "StgHeader" "prof.hp.ldvw"

@@ -14,8 +14,8 @@
 #ifndef RTS_PROF_CCS_H
 #define RTS_PROF_CCS_H
 
-// Returns non-zero if the RTS is a profiling version
-int rts_isProfiled(void);
+
+
 
 /* -----------------------------------------------------------------------------
  * Data Structures 
@@ -37,7 +37,7 @@ typedef struct CostCentre_ {
     char * srcloc;
 
     // used for accumulating costs at the end of the run...
-    StgWord64 mem_alloc;      // align 8 (Note [struct alignment])
+    StgWord64 mem_alloc;      // align 8 (Note [struct alignment]
     StgWord   time_ticks;
 
     StgInt is_caf;            // non-zero for a CAF cost centre
@@ -87,12 +87,6 @@ void stopProfTimer      ( void );
 void startProfTimer     ( void );
 
 /* -----------------------------------------------------------------------------
- * The rest is PROFILING only...
- * ---------------------------------------------------------------------------*/
-
-#if defined(PROFILING)
-  
-/* -----------------------------------------------------------------------------
  * Constants
  * ---------------------------------------------------------------------------*/
 
@@ -102,6 +96,12 @@ void startProfTimer     ( void );
 /* Constants used to set is_caf flag on CostCentres */
 #define CC_IS_CAF      'c'            /* 'c'  => *is* a CAF cc           */
 #define CC_NOT_CAF     0
+
+/* -----------------------------------------------------------------------------
+ * The rest is PROFILING only...
+ * ---------------------------------------------------------------------------*/
+
+#if defined(PROFILING)
 
 /* -----------------------------------------------------------------------------
  * Data Structures

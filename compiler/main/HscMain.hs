@@ -1151,6 +1151,8 @@ hscGenHardCode hsc_env cgguts mod_summary output_filename = do
                     cg_dep_pkgs = dependencies,
                     cg_hpc_info = hpc_info } = cgguts
             dflags = hsc_dflags hsc_env
+            
+        
             location = ms_location mod_summary
             data_tycons = filter isDataTyCon tycons
             -- cg_tycons includes newtypes, for the benefit of External Core,
@@ -1205,20 +1207,24 @@ hscInteractive hsc_env cgguts mod_summary = do
                cg_binds    = core_binds,
                cg_tycons   = tycons,
                cg_foreign  = foreign_stubs,
-               cg_modBreaks = mod_breaks } = cgguts
+               cg_modBreaks = mod_breaks,
+               cg_modCCs   = mod_CCs } = cgguts
 
         location = ms_location mod_summary
         data_tycons = filter isDataTyCon tycons
         -- cg_tycons includes newtypes, for the benefit of External Core,
         -- but we don't generate any code for newtypes
-
+    
+    --XXX temporary: ensure we
+    --let x = case profAuto dflags of {ProfAutoAll->True; _->False}
+    --MASSERT(x)
     -------------------
     -- PREPARE FOR CODE GENERATION
     -- Do saturation and convert to A-normal form
     prepd_binds <- {-# SCC "CorePrep" #-}
                    corePrepPgm dflags hsc_env core_binds data_tycons
     -----------------  Generate byte code ------------------
-    comp_bc <- byteCodeGen dflags this_mod prepd_binds data_tycons mod_breaks
+    comp_bc <- byteCodeGen dflags this_mod prepd_binds data_tycons mod_breaks mod_CCs
     ------------------ Create f-x-dynamic C-side stuff ---
     (_istub_h_exists, istub_c_exists)
         <- outputForeignStubs dflags this_mod location foreign_stubs
@@ -1443,7 +1449,8 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
         !CgGuts{ cg_module    = this_mod,
                  cg_binds     = core_binds,
                  cg_tycons    = tycons,
-                 cg_modBreaks = mod_breaks } = tidy_cg
+                 cg_modBreaks = mod_breaks,
+                 cg_modCCs    = mod_CCs } = tidy_cg
         data_tycons = filter isDataTyCon tycons
 
     {- Prepare For Code Generation -}
@@ -1453,7 +1460,7 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
 
     {- Generate byte code -}
     cbc <- liftIO $ byteCodeGen dflags this_mod
-                                prepd_binds data_tycons mod_breaks
+                                prepd_binds data_tycons mod_breaks mod_CCs
 
     let src_span = srcLocSpan interactiveSrcLoc
     hsc_env <- getHscEnv
@@ -1596,12 +1603,14 @@ mkModGuts mod safe binds =
         mg_anns         = [],
         mg_hpc_info     = emptyHpcInfo False,
         mg_modBreaks    = emptyModBreaks,
+        mg_modCCs       = emptyModCCs,
         mg_vect_info    = noVectInfo,
         mg_inst_env     = emptyInstEnv,
         mg_fam_inst_env = emptyFamInstEnv,
         mg_safe_haskell = safe,
         mg_trust_pkg    = False,
         mg_dependent_files = []
+        
     }
 
 

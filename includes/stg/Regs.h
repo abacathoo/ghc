@@ -93,6 +93,7 @@ typedef struct {
   StgPtr 	  rHp;
   StgPtr 	  rHpLim;
   struct CostCentreStack_ * rCCCS;  /* current cost-centre-stack */
+  struct LwtCostCentreStack_ * rCLCCS;
   struct StgTSO_ *     rCurrentTSO;
   struct nursery_ *    rNursery;
   struct bdescr_ *     rCurrentNursery; /* Hp/HpLim point into this block */

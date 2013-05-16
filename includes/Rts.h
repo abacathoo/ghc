@@ -197,6 +197,7 @@ INLINE_HEADER Time fsecondsToTime (double t)
 /* Profiling information */
 #include "rts/prof/CCS.h"
 #include "rts/prof/LDV.h"
+#include "rts/prof/LwtCCS.h"
 
 /* Parallel information */
 #include "rts/OSThreads.h"
@@ -238,6 +239,7 @@ INLINE_HEADER Time fsecondsToTime (double t)
 #include "rts/Utils.h"
 #include "rts/PrimFloat.h"
 #include "rts/Main.h"
+
 
 /* Misc stuff without a home */
 DLL_IMPORT_RTS extern char **prog_argv;	/* so we can get at these from Haskell */
