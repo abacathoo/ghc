@@ -50,6 +50,7 @@ module Unique (
     mkVarOccUnique, mkDataOccUnique, mkTvOccUnique, mkTcOccUnique,
         mkRegSingleUnique, mkRegPairUnique, mkRegClassUnique, mkRegSubUnique,
         mkCostCentreUnique,
+        mkTracepointUnique,
 
         mkBuiltinUnique,
         mkPseudoUniqueD,
@@ -360,6 +361,9 @@ mkRegClassUnique  = mkUnique 'L'
 mkCostCentreUnique :: Int -> Unique
 mkCostCentreUnique = mkUnique 'C'
 
+mkTracepointUnique :: Int -> Unique
+mkTracepointUnique = mkUnique 'T'
+
 mkVarOccUnique, mkDataOccUnique, mkTvOccUnique, mkTcOccUnique :: FastString -> Unique
 -- See Note [The Unique of an OccName] in OccName
 mkVarOccUnique  fs = mkUnique 'i' (iBox (uniqueOfFS fs))
@@ -367,4 +371,3 @@ mkDataOccUnique fs = mkUnique 'd' (iBox (uniqueOfFS fs))
 mkTvOccUnique   fs = mkUnique 'v' (iBox (uniqueOfFS fs))
 mkTcOccUnique   fs = mkUnique 'c' (iBox (uniqueOfFS fs))
 \end{code}
-
