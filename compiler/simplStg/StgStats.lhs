@@ -155,6 +155,7 @@ statExpr (StgConApp _ _)  = countOne ConstructorApps
 statExpr (StgOpApp _ _ _) = countOne PrimitiveApps
 statExpr (StgSCC _ _ _ e) = statExpr e
 statExpr (StgTick _ _ e)  = statExpr e
+statExpr (StgTracepoint _ e)= statExpr e
 
 statExpr (StgLetNoEscape _ _ binds body)
   = statBinding False{-not top-level-} binds    `combineSE`

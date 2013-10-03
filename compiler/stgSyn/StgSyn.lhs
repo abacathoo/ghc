@@ -47,6 +47,7 @@ module StgSyn (
 import Bitmap
 import CoreSyn     ( AltCon )
 import CostCentre  ( CostCentreStack, CostCentre )
+import BacktraceTypes
 import DataCon
 import DynFlags
 import FastString
@@ -374,6 +375,21 @@ For @scc@ expressions we introduce a new STG construct.
         !Bool                  -- push the cost centre?
         (GenStgExpr bndr occ)  -- scc expression
 \end{code}
+
+%************************************************************************
+%*                                                                      *
+\subsubsection{@GenStgExpr@: @Tracepoint@s}
+%*                                                                      *
+%************************************************************************
+
+For @Tracepoints@ expressions we introduce a new STG construct.
+
+\begin{code}
+  | StgTracepoint
+        Tracepoint             -- label of SCC expression
+        (GenStgExpr bndr occ)  -- sub expression
+\end{code}
+
 
 %************************************************************************
 %*                                                                      *
@@ -748,6 +764,10 @@ pprStgExpr (StgTick m n expr)
   = sep [ hsep [ptext (sLit "_tick_"),  pprModule m,text (show n)],
           pprStgExpr expr ]
 
+pprStgExpr (StgTracepoint tp expr)
+  = sep [ hsep [ptext (sLit "tracepoint<"), ppr tp, char '>'],
+          pprStgExpr expr ]
+    
 pprStgExpr (StgCase expr lvs_whole lvs_rhss bndr srt alt_type alts)
   = sep [sep [ptext (sLit "case"),
            nest 4 (hsep [pprStgExpr expr,
