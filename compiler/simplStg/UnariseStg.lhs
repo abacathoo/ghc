@@ -132,6 +132,8 @@ unariseExpr us rho (StgSCC cc bump_entry push_cc e)
   = StgSCC cc bump_entry push_cc (unariseExpr us rho e)
 unariseExpr us rho (StgTick mod tick_n e)
   = StgTick mod tick_n (unariseExpr us rho e)
+unariseExpr us rho (StgTracepoint tp e)
+  = StgTracepoint tp (unariseExpr us rho e)
 
 ------------------------
 unariseAlts :: UniqSupply -> UnariseEnv -> AltType -> Id -> RepType -> [StgAlt] -> (AltType, [StgAlt])
