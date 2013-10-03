@@ -116,6 +116,7 @@ Library
         parser
         prelude
         profiling
+        backtrace
         rename
         simplCore
         simplStg
@@ -318,6 +319,7 @@ Library
         CostCentre
         ProfInit
         SCCfinal
+        BacktraceTypes
         RnBinds
         RnEnv
         RnExpr
