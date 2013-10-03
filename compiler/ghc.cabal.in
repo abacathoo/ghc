@@ -205,6 +205,7 @@ Library
         CgUtils
         StgCmm
         StgCmmBind
+        StgCmmBacktrace
         StgCmmClosure
         StgCmmCon
         StgCmmEnv
