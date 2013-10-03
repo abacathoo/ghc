@@ -362,6 +362,7 @@ data GeneralFlag
    | Opt_GranMacros
    | Opt_PIC
    | Opt_SccProfilingOn
+   | Opt_BacktraceOn
    | Opt_Ticky
    | Opt_Ticky_Allocd
    | Opt_Ticky_LNE
@@ -2408,6 +2409,10 @@ dynamic_flags = [
   , Flag "fprof-auto-exported"    (noArg (\d -> d { profAuto = ProfAutoExports } ))
   , Flag "fprof-auto-calls"       (noArg (\d -> d { profAuto = ProfAutoCalls } ))
   , Flag "fno-prof-auto"          (noArg (\d -> d { profAuto = NoProfAuto } ))
+
+        ------ Backtrace flags --------------------------------------
+
+  , Flag "backtrace"              (NoArg (setGeneralFlag Opt_BacktraceOn))
 
         ------ Compiler flags -----------------------------------------------
 
