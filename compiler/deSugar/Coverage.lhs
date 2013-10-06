@@ -17,6 +17,7 @@ import NameSet hiding (FreeVars)
 import Name
 import Bag
 import CostCentre
+import BacktraceTypes
 import CoreSyn
 import Id
 import VarSet
@@ -93,6 +94,8 @@ addTicksToBinds dflags mod mod_loc exports tyCons binds =
                           _ | gopt Opt_Hpc dflags -> HpcTicks
                             | gopt Opt_SccProfilingOn dflags
                                                   -> ProfNotes
+                            | gopt Opt_BacktraceOn dflags
+                                                  -> Tracepoints
                             | otherwise           -> error "addTicksToBinds: No way to annotate!"
                        })
                    (TT
@@ -184,6 +187,7 @@ data TickDensity
 mkDensity :: DynFlags -> TickDensity
 mkDensity dflags
   | gopt Opt_Hpc dflags                  = TickForCoverage
+  | gopt Opt_BacktraceOn dflags          = TickAllFunctions
   | HscInterpreted  <- hscTarget dflags  = TickForBreakPoints
   | ProfAutoAll     <- profAuto dflags   = TickAllFunctions
   | ProfAutoTop     <- profAuto dflags   = TickTopFunctions
@@ -934,7 +938,7 @@ data TickTransEnv = TTE { fileName     :: FastString
 
 --      deriving Show
 
-data TickishType = ProfNotes | HpcTicks | Breakpoints
+data TickishType = ProfNotes | HpcTicks | Breakpoints | Tracepoints
 
 
 -- | Tickishs that only make sense when their source code location
@@ -1100,6 +1104,12 @@ mkTickish boxLabel countEntries topOnly pos fvs decl_path =
 
         cc = mkUserCC (mkFastString cc_name) (this_mod env) pos (mkCostCentreUnique c)
 
+        tracepoint_name = cc_name
+        tp = (Tracepoint { tp_key  = getKey $ mkTracepointUnique c
+                         , tp_name = mkFastString tracepoint_name
+                         , tp_mod  = this_mod env
+                         , tp_loc  = pos })
+
         dflags = tte_dflags env
 
         count = countEntries && gopt Opt_ProfCountEntries dflags
@@ -1108,6 +1118,7 @@ mkTickish boxLabel countEntries topOnly pos fvs decl_path =
           HpcTicks    -> HpcTick (this_mod env) c
           ProfNotes   -> ProfNote cc count True{-scopes-}
           Breakpoints -> Breakpoint c ids
+          Tracepoints -> TracepointTick tp
     in
     ( tickish
     , fvs
