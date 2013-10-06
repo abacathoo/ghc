@@ -3,7 +3,7 @@
   --                                              --
   -- (c) William Kenyon 2013                      --
   --------------------------------------------------
-module StgCmmBacktrace (initTracepoints) where
+module StgCmmBacktrace (emitPushTracepoint, initTracepoints) where
 
 #include "HsVersions.h"
 import Util (debugIsOn)
@@ -23,6 +23,21 @@ import CLabel
 import FastString
 import Outputable
 import qualified Module
+
+
+emitPushTracepoint :: Tracepoint -> FCode ()
+emitPushTracepoint tp = do
+  dflags <- getDynFlags
+  MASSERT(gopt Opt_BacktraceOn dflags)
+  let cap = cmmSubWord dflags (CmmReg baseReg)
+              (mkIntExpr dflags (oFFSET_Capability_r dflags))
+  emitCCall [] cfun
+    [(cap,AddrHint),
+     (CmmLit (CmmLabel (mkCTracepointLabel tp)),AddrHint)]
+  where
+    cfun = (CmmLit (CmmLabel (mkForeignLabel
+                              (fsLit "pushTracepoint") Nothing
+                              ForeignLabelInExternalPackage IsFunction)))
 
 initTracepoints :: [Tracepoint] -> FCode ()
 initTracepoints tps =

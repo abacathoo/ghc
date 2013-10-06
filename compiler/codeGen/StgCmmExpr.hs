@@ -24,6 +24,7 @@ import StgCmmHpc
 import StgCmmTicky
 import StgCmmUtils
 import StgCmmClosure
+import StgCmmBacktrace
 
 import StgSyn
 
@@ -61,6 +62,7 @@ cgExpr (StgOpApp (StgPrimOp SeqOp) [StgVarArg a, _] _res_ty) =
 cgExpr (StgOpApp op args ty) = cgOpApp op args ty
 cgExpr (StgConApp con args)  = cgConApp con args
 cgExpr (StgSCC cc tick push expr) = do { emitSetCCC cc tick push; cgExpr expr }
+cgExpr (StgTracepoint tp expr) = do { emitPushTracepoint tp; cgExpr expr }
 cgExpr (StgTick m n expr) = do dflags <- getDynFlags
                                emit (mkTickBox dflags m n)
                                cgExpr expr
