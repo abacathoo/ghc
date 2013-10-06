@@ -466,6 +466,15 @@ CLOSURE(stg_NO_FINALIZER_closure,stg_NO_FINALIZER);
 INFO_TABLE(stg_STABLE_NAME,0,1,PRIM,"STABLE_NAME","STABLE_NAME")
 { foreign "C" barf("STABLE_NAME object entered!") never returns; }
 
+/* -------------------------------------------------------------------------
+   Backtrace
+   ------------------------------------------------------------------------- */
+
+INFO_TABLE(stg_Backtrace,1,1,PRIM,
+           "Backtrace", "Backtrace")
+{ foreign "C" barf("Backtrace object entered!") never returns;}
+
+
 /* ----------------------------------------------------------------------------
    MVars
 
