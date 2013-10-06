@@ -198,6 +198,9 @@ INLINE_HEADER Time fsecondsToTime (double t)
 #include "rts/prof/CCS.h"
 #include "rts/prof/LDV.h"
 
+/* Backtrace information */
+#include "rts/Backtrace.h"
+
 /* Parallel information */
 #include "rts/OSThreads.h"
 #include "rts/SpinLock.h"
