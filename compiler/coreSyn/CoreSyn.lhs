@@ -91,6 +91,7 @@ module CoreSyn (
 #include "HsVersions.h"
 
 import CostCentre
+import BacktraceTypes
 import VarEnv( InScopeSet )
 import Var
 import Type
@@ -471,7 +472,7 @@ data Tickish id =
                                 -- Careful about substitution!  See
                                 -- Note [substTickish] in CoreSubst.
     }
-
+  | TracepointTick Tracepoint
   deriving (Eq, Ord, Data, Typeable)
 
 
@@ -487,6 +488,8 @@ tickishCounts :: Tickish id -> Bool
 tickishCounts n@ProfNote{} = profNoteCount n
 tickishCounts HpcTick{}    = True
 tickishCounts Breakpoint{} = True
+tickishCounts TracepointTick{} = False
+   --False for Tracepoints because there is no need to count evaluations
 
 tickishScoped :: Tickish id -> Bool
 tickishScoped n@ProfNote{} = profNoteScope n
@@ -495,6 +498,10 @@ tickishScoped Breakpoint{} = True
    -- Breakpoints are scoped: eventually we're going to do call
    -- stacks, but also this helps prevent the simplifier from moving
    -- breakpoints around and changing their result type (see #1531).
+tickishScoped TracepointTick{} = False
+   -- Not sure if Tracepoints are scoped, set to False to let the simplifier
+   -- do as much simplifying as it can. We'll come back and change this if
+   -- it becomes a problem.
 
 mkNoTick :: Tickish id -> Tickish id
 mkNoTick n@ProfNote{} = n {profNoteCount = False}
@@ -1385,6 +1392,7 @@ seqTickish :: Tickish Id -> ()
 seqTickish ProfNote{ profNoteCC = cc } = cc `seq` ()
 seqTickish HpcTick{} = ()
 seqTickish Breakpoint{ breakpointFVs = ids } = seqBndrs ids
+seqTickish (TracepointTick tp) = tp `seq` ()
 
 seqBndr :: CoreBndr -> ()
 seqBndr b = b `seq` ()

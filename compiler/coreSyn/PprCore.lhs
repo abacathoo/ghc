@@ -503,6 +503,7 @@ instance Outputable id => Outputable (Tickish id) where
          (True,True)  -> hcat [ptext (sLit "scctick<"), ppr cc, char '>']
          (True,False) -> hcat [ptext (sLit "tick<"),    ppr cc, char '>']
          _            -> hcat [ptext (sLit "scc<"),     ppr cc, char '>']
+  ppr (TracepointTick tp) = hcat [ptext (sLit "tracepoint<"), ppr tp, char '>']
 \end{code}
 
 -----------------------------------------------------
