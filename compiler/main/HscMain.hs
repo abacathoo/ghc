@@ -120,6 +120,7 @@ import CoreToStg        ( coreToStg )
 import qualified StgCmm ( codeGen )
 import StgSyn
 import CostCentre
+import BacktraceTypes
 import ProfInit
 import TyCon
 import Name
@@ -1130,7 +1131,8 @@ hscGenHardCode hsc_env cgguts mod_summary output_filename = do
                     cg_tycons   = tycons,
                     cg_foreign  = foreign_stubs0,
                     cg_dep_pkgs = dependencies,
-                    cg_hpc_info = hpc_info } = cgguts
+                    cg_hpc_info = hpc_info,
+                    cg_modTracepoints = modTracepoints} = cgguts
             dflags = hsc_dflags hsc_env
             location = ms_location mod_summary
             data_tycons = filter isDataTyCon tycons
@@ -1155,7 +1157,7 @@ hscGenHardCode hsc_env cgguts mod_summary output_filename = do
         cmms <- {-# SCC "NewCodeGen" #-}
                          tryNewCodeGen hsc_env this_mod data_tycons
                              cost_centre_info
-                             stg_binds hpc_info
+                             stg_binds hpc_info modTracepoints
 
         ------------------  Code output -----------------------
         rawcmms0 <- {-# SCC "cmmToRawCmm" #-}
@@ -1234,18 +1236,19 @@ tryNewCodeGen   :: HscEnv -> Module -> [TyCon]
                 -> CollectedCCs
                 -> [StgBinding]
                 -> HpcInfo
+                -> [Tracepoint]
                 -> IO (Stream IO CmmGroup ())
          -- Note we produce a 'Stream' of CmmGroups, so that the
          -- backend can be run incrementally.  Otherwise it generates all
          -- the C-- up front, which has a significant space cost.
 tryNewCodeGen hsc_env this_mod data_tycons
-              cost_centre_info stg_binds hpc_info = do
+              cost_centre_info stg_binds hpc_info modTracepoints = do
     let dflags = hsc_dflags hsc_env
 
     let cmm_stream :: Stream IO CmmGroup ()
         cmm_stream = {-# SCC "StgCmm" #-}
             StgCmm.codeGen dflags this_mod data_tycons
-                           cost_centre_info stg_binds hpc_info
+                           cost_centre_info stg_binds hpc_info modTracepoints
 
         -- codegen consumes a stream of CmmGroup, and produces a new
         -- stream of CmmGroup (not necessarily synchronised: one
@@ -1577,6 +1580,7 @@ mkModGuts mod safe binds =
         mg_anns         = [],
         mg_hpc_info     = emptyHpcInfo False,
         mg_modBreaks    = emptyModBreaks,
+        mg_modTracepoints = [],
         mg_vect_info    = noVectInfo,
         mg_inst_env     = emptyInstEnv,
         mg_fam_inst_env = emptyFamInstEnv,

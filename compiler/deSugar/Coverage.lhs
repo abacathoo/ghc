@@ -61,16 +61,17 @@ addTicksToBinds
                                 -- hasn't set it), so we have to work from this set.
         -> [TyCon]              -- Type constructor in this module
         -> LHsBinds Id
-        -> IO (LHsBinds Id, HpcInfo, ModBreaks)
+        -> IO (LHsBinds Id, HpcInfo, ModBreaks, [Tracepoint])
 
 addTicksToBinds dflags mod mod_loc exports tyCons binds =
-
+ let emptyTicks = (binds, emptyHpcInfo False
+                  ,emptyModBreaks, [{-no tracepoints-}]) in
  case ml_hs_file mod_loc of
-   Nothing        -> return (binds, emptyHpcInfo False, emptyModBreaks)
+   Nothing        -> return emptyTicks
    Just orig_file -> do
 
      if "boot" `isSuffixOf` orig_file
-         then return (binds, emptyHpcInfo False, emptyModBreaks)
+         then return emptyTicks
          else do
 
      let  orig_file2 = guessSourceFile binds orig_file
@@ -101,10 +102,10 @@ addTicksToBinds dflags mod mod_loc exports tyCons binds =
                    (TT
                       { tickBoxCount = 0
                       , mixEntries   = []
+                      , tracePoints  = []
                       })
 
      let entries = reverse $ mixEntries st
-
      let count = tickBoxCount st
      hashNo <- writeMixEntries dflags mod count entries orig_file2
      modBreaks <- mkModBreaks dflags count entries
@@ -113,7 +114,7 @@ addTicksToBinds dflags mod mod_loc exports tyCons binds =
          log_action dflags dflags SevDump noSrcSpan defaultDumpStyle
              (pprLHsBinds binds1)
 
-     return (binds1, HpcInfo count hashNo, modBreaks)
+     return (binds1, HpcInfo count hashNo, modBreaks, tracePoints st)
 
 
 guessSourceFile :: LHsBinds Id -> FilePath -> FilePath
@@ -922,6 +923,7 @@ liftL f (L loc a) = do
 \begin{code}
 data TickTransState = TT { tickBoxCount:: Int
                          , mixEntries  :: [MixEntry_]
+                         , tracePoints :: [Tracepoint]
                          }
 
 data TickTransEnv = TTE { fileName     :: FastString
@@ -1097,6 +1099,7 @@ mkTickish boxLabel countEntries topOnly pos fvs decl_path =
             --     the Id, and we can't handle that.
 
         mes = mixEntries st
+        tps = tracePoints st
         me = (pos, decl_path, map (nameOccName.idName) ids, boxLabel)
 
         cc_name | topOnly   = head decl_path
@@ -1122,7 +1125,7 @@ mkTickish boxLabel countEntries topOnly pos fvs decl_path =
     in
     ( tickish
     , fvs
-    , st {tickBoxCount=c+1,mixEntries=me:mes}
+    , st {tickBoxCount=c+1,mixEntries=me:mes,tracePoints = tp:tps}
     )
 
 

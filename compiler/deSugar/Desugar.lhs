@@ -102,11 +102,11 @@ deSugar hsc_env
                                             NoProfAuto -> False
                                             _          -> True)
 
-                     (binds_cvr,ds_hpc_info, modBreaks)
+                     (binds_cvr,ds_hpc_info, modBreaks, modTracepoints)
                          <- if want_ticks && not (isHsBoot hsc_src)
                               then addTicksToBinds dflags mod mod_loc export_set
                                           (typeEnvTyCons type_env) binds
-                              else return (binds, hpcInfo, emptyModBreaks)
+                              else return (binds, hpcInfo, emptyModBreaks, [])
 
                      initDs hsc_env mod rdr_env type_env $ do
                        do { ds_ev_binds <- dsEvBinds ev_binds
@@ -122,12 +122,12 @@ deSugar hsc_env
                                    , foreign_prs `appOL` core_prs `appOL` spec_prs
                                    , spec_rules ++ ds_rules, ds_vects
                                    , ds_fords `appendStubC` hpc_init
-                                   , ds_hpc_info, modBreaks) }
+                                   , ds_hpc_info, modBreaks, modTracepoints) }
 
         ; case mb_res of {
            Nothing -> return (msgs, Nothing) ;
-           Just (ds_ev_binds, all_prs, all_rules, vects0, ds_fords, ds_hpc_info, modBreaks) -> do
-
+           Just (ds_ev_binds, all_prs, all_rules, vects0, ds_fords, ds_hpc_info
+                , modBreaks, modTracepoints) -> do
         {       -- Add export flags to bindings
           keep_alive <- readIORef keep_var
         ; let (rules_for_locals, rules_for_imps)
@@ -182,6 +182,7 @@ deSugar hsc_env
                 mg_foreign      = ds_fords,
                 mg_hpc_info     = ds_hpc_info,
                 mg_modBreaks    = modBreaks,
+                mg_modTracepoints = modTracepoints,
                 mg_vect_decls   = ds_vects,
                 mg_vect_info    = noVectInfo,
                 mg_safe_haskell = safe_mode,

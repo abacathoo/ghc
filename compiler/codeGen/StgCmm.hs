@@ -12,6 +12,7 @@ module StgCmm ( codeGen ) where
 #include "HsVersions.h"
 
 import StgCmmProf (initCostCentres, ldvEnter)
+import StgCmmBacktrace
 import StgCmmMonad
 import StgCmmEnv
 import StgCmmBind
@@ -30,6 +31,7 @@ import DynFlags
 
 import HscTypes
 import CostCentre
+import BacktraceTypes
 import Id
 import IdInfo
 import Type
@@ -55,11 +57,12 @@ codeGen :: DynFlags
         -> CollectedCCs                -- (Local/global) cost-centres needing declaring/registering.
         -> [StgBinding]                -- Bindings to convert
         -> HpcInfo
+        -> [Tracepoint]
         -> Stream IO CmmGroup ()       -- Output as a stream, so codegen can
                                         -- be interleaved with output
 
 codeGen dflags this_mod data_tycons
-        cost_centre_info stg_binds hpc_info
+        cost_centre_info stg_binds hpc_info modTracepoints
   = do  { liftIO $ showPass dflags "New CodeGen"
 
               -- cg: run the code generator, and yield the resulting CmmGroup
@@ -83,7 +86,7 @@ codeGen dflags this_mod data_tycons
                -- FIRST.  This is because when -split-objs is on we need to
                -- combine this block with its initialisation routines; see
                -- Note [pipeline-split-init].
-        ; cg (mkModuleInit cost_centre_info this_mod hpc_info)
+        ; cg (mkModuleInit cost_centre_info this_mod hpc_info modTracepoints)
 
         ; mapM_ (cg . cgTopBinding dflags) stg_binds
 
@@ -188,13 +191,15 @@ mkModuleInit
         :: CollectedCCs         -- cost centre info
         -> Module
         -> HpcInfo
+        -> [Tracepoint]
         -> FCode ()
 
-mkModuleInit cost_centre_info this_mod hpc_info
+mkModuleInit cost_centre_info this_mod hpc_info modTracepoints
   = do  { initHpc this_mod hpc_info
         ; initCostCentres cost_centre_info
             -- For backwards compatibility: user code may refer to this
             -- label for calling hs_add_root().
+        ; initTracepoints modTracepoints  
         ; emitDecl (CmmData Data (Statics (mkPlainModuleInitLabel this_mod) []))
         }
 
