@@ -246,7 +246,7 @@ callerSaveVolatileRegs dflags = (caller_save, caller_load)
 
     system_regs = [ Sp,SpLim,Hp,HpLim,CCCS,CurrentTSO,CurrentNursery
                     {- ,SparkHd,SparkTl,SparkBase,SparkLim -}
-                  , BaseReg ]
+                  , BaseReg, CurrentBacktrace ]
 
     regs_to_save = filter (callerSaves platform) system_regs
 
@@ -296,6 +296,7 @@ baseRegOffset dflags (LongReg 1)    = oFFSET_StgRegTable_rL1 dflags
 baseRegOffset dflags Hp             = oFFSET_StgRegTable_rHp dflags
 baseRegOffset dflags HpLim          = oFFSET_StgRegTable_rHpLim dflags
 baseRegOffset dflags CCCS           = oFFSET_StgRegTable_rCCCS dflags
+baseRegOffset dflags CurrentBacktrace=oFFSET_StgRegTable_rCurrentBacktrace dflags
 baseRegOffset dflags CurrentTSO     = oFFSET_StgRegTable_rCurrentTSO dflags
 baseRegOffset dflags CurrentNursery = oFFSET_StgRegTable_rCurrentNursery dflags
 baseRegOffset dflags HpAlloc        = oFFSET_StgRegTable_rHpAlloc dflags

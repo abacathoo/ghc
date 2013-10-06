@@ -355,6 +355,7 @@ data GlobalReg
   | Hp                  -- Heap ptr; points to last occupied heap location.
   | HpLim               -- Heap limit register
   | CCCS                -- Current cost-centre stack
+  | CurrentBacktrace    -- Current Backtrace
   | CurrentTSO          -- pointer to current thread's TSO
   | CurrentNursery      -- pointer to allocation area
   | HpAlloc             -- allocation count for heap check failure
@@ -392,6 +393,7 @@ instance Eq GlobalReg where
    Hp == Hp = True
    HpLim == HpLim = True
    CCCS == CCCS = True
+   CurrentBacktrace == CurrentBacktrace = True
    CurrentTSO == CurrentTSO = True
    CurrentNursery == CurrentNursery = True
    HpAlloc == HpAlloc = True
@@ -416,6 +418,7 @@ instance Ord GlobalReg where
    compare Hp Hp = EQ
    compare HpLim HpLim = EQ
    compare CCCS CCCS = EQ
+   compare CurrentBacktrace CurrentBacktrace = EQ
    compare CurrentTSO CurrentTSO = EQ
    compare CurrentNursery CurrentNursery = EQ
    compare HpAlloc HpAlloc = EQ
@@ -448,6 +451,8 @@ instance Ord GlobalReg where
    compare _ HpLim = GT
    compare CCCS _ = LT
    compare _ CCCS = GT
+   compare CurrentBacktrace _ = LT
+   compare _ CurrentBacktrace = GT
    compare CurrentTSO _ = LT
    compare _ CurrentTSO = GT
    compare CurrentNursery _ = LT
