@@ -83,6 +83,7 @@ module CLabel (
         foreignLabelStdcallInfo,
 
         mkCCLabel, mkCCSLabel,
+        mkCTracepointLabel,
 
         DynamicLinkerLabelInfo(..),
         mkDynamicLinkerLabel,
@@ -113,11 +114,13 @@ import Unique
 import PrimOp
 import Config
 import CostCentre
+import BacktraceTypes
 import Outputable
 import FastString
 import DynFlags
 import Platform
 import UniqSet
+
 
 -- -----------------------------------------------------------------------------
 -- The CLabel type
@@ -193,6 +196,8 @@ data CLabel
 
   | CC_Label  CostCentre
   | CCS_Label CostCentreStack
+
+  | Tracepoint_Label Tracepoint
 
 
   -- | These labels are generated and used inside the NCG only.
@@ -501,6 +506,10 @@ mkCCSLabel :: CostCentreStack -> CLabel
 mkCCLabel           cc          = CC_Label cc
 mkCCSLabel          ccs         = CCS_Label ccs
 
+-- Constructing Cost Centre Trace Labels
+mkCTracepointLabel :: Tracepoint -> CLabel
+mkCTracepointLabel tp = Tracepoint_Label tp
+
 mkRtsApFastLabel :: FastString -> CLabel
 mkRtsApFastLabel str = RtsLabel (RtsApFast str)
 
@@ -635,6 +644,7 @@ needsCDecl (CmmLabel pkgId _ _)
 needsCDecl l@(ForeignLabel{})           = not (isMathFun l)
 needsCDecl (CC_Label _)                 = True
 needsCDecl (CCS_Label _)                = True
+needsCDecl (Tracepoint_Label _)            = True
 needsCDecl (HpcTicksLabel _)            = True
 needsCDecl (DynamicLinkerLabel {})      = panic "needsCDecl DynamicLinkerLabel"
 needsCDecl PicBaseLabel                 = panic "needsCDecl PicBaseLabel"
@@ -758,6 +768,7 @@ externallyVisibleCLabel (ForeignLabel{})        = True
 externallyVisibleCLabel (IdLabel name _ info)   = isExternalName name && externallyVisibleIdLabel info
 externallyVisibleCLabel (CC_Label _)            = True
 externallyVisibleCLabel (CCS_Label _)           = True
+externallyVisibleCLabel (Tracepoint_Label _)       = True
 externallyVisibleCLabel (DynamicLinkerLabel _ _)  = False
 externallyVisibleCLabel (HpcTicksLabel _)       = True
 externallyVisibleCLabel (LargeBitmapLabel _)    = False
@@ -1084,6 +1095,7 @@ pprCLbl (IdLabel name _cafs flavor) = ppr name <> ppIdFlavor flavor
 
 pprCLbl (CC_Label cc)           = ppr cc
 pprCLbl (CCS_Label ccs)         = ppr ccs
+pprCLbl (Tracepoint_Label tp)      = ppr tp
 
 pprCLbl (PlainModuleInitLabel mod)
    = ptext (sLit "__stginit_") <> ppr mod

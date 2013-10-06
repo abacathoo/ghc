@@ -138,6 +138,7 @@ import Var
 import Id
 import IdInfo           ( IdDetails(..) )
 import Type
+import BacktraceTypes
 
 import Annotations
 import Class
@@ -997,6 +998,7 @@ data ModGuts
         mg_anns      :: [Annotation],    -- ^ Annotations declared in this module
         mg_hpc_info  :: !HpcInfo,        -- ^ Coverage tick boxes in the module
         mg_modBreaks :: !ModBreaks,      -- ^ Breakpoints for the module
+        mg_modTracepoints :: ![Tracepoint], -- ^ Tracepoints for the module
         mg_vect_decls:: ![CoreVect],     -- ^ Vectorisation declarations in this module
                                          --   (produced by desugarer & consumed by vectoriser)
         mg_vect_info :: !VectInfo,       -- ^ Pool of vectorised declarations in the module
@@ -1056,7 +1058,8 @@ data CgGuts
         cg_dep_pkgs  :: ![PackageId],    -- ^ Dependent packages, used to
                                          -- generate #includes for C code gen
         cg_hpc_info  :: !HpcInfo,        -- ^ Program coverage tick box information
-        cg_modBreaks :: !ModBreaks       -- ^ Module breakpoints
+        cg_modBreaks :: !ModBreaks,      -- ^ Module breakpoints
+        cg_modTracepoints :: ![Tracepoint]
     }
 
 -----------------------------------
