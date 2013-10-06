@@ -393,6 +393,10 @@ coreToStgExpr (Tick (ProfNote cc tick push) expr)
   = do (expr2, fvs, escs) <- coreToStgExpr expr
        return (StgSCC cc tick push expr2, fvs, escs)
 
+coreToStgExpr (Tick (TracepointTick tp) expr)
+  = do (expr2, fvs, escs) <- coreToStgExpr expr
+       return (StgTracepoint tp expr2, fvs, escs)
+
 coreToStgExpr (Tick Breakpoint{} _expr)
   = panic "coreToStgExpr: breakpoint should not happen"
 
