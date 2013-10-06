@@ -238,6 +238,12 @@ typedef struct {
     StgWord       bitmap[FLEXIBLE_ARRAY];  /* an StgLargeBitmap */
 } StgBCO;
 
+typedef struct StgBacktrace_ {
+    StgHeader header;
+    struct StgBacktrace_ *link;
+    Tracepoint *tp;
+} StgBacktrace;
+
 #define BCO_BITMAP(bco)      ((StgLargeBitmap *)((StgBCO *)(bco))->bitmap)
 #define BCO_BITMAP_SIZE(bco) (BCO_BITMAP(bco)->size)
 #define BCO_BITMAP_BITS(bco) (BCO_BITMAP(bco)->bitmap)

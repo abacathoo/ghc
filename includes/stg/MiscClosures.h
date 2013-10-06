@@ -207,6 +207,9 @@ RTS_ENTRY(stg_sel_13_noupd);
 RTS_ENTRY(stg_sel_14_noupd);
 RTS_ENTRY(stg_sel_15_noupd);
 
+/* backtrace info table*/
+RTS_ENTRY(stg_Backtrace);
+
 /* standard ap thunks */
 
 RTS_THUNK(stg_ap_1_upd);
