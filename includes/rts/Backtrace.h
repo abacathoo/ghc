@@ -18,4 +18,6 @@ typedef struct {
     char * srcloc;
 } Tracepoint;
 
+void pushTracepoint(Capability*,Tracepoint*);
+
 #endif
