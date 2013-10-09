@@ -443,7 +443,7 @@ stg_raisezh /* explicit stack */
     W_ exception;
 
    exception = R1;
-
+   ccall fprintBacktrace(CurrentBacktrace "ptr");
 #if defined(PROFILING)
     /* Debugging tool: on raising an  exception, show where we are. */
 

@@ -738,7 +738,7 @@ raiseAsync(Capability *cap, StgTSO *tso, StgClosure *exception,
 
     debugTraceCap(DEBUG_sched, cap,
                   "raising exception in thread %ld.", (long)tso->id);
-    
+    fprintBacktrace(cap->r.rCurrentBacktrace);
 #if defined(PROFILING)
     /* 
      * Debugging tool: on raising an  exception, show where we are.

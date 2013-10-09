@@ -16,3 +16,12 @@ pushTracepoint(Capability* cap, Tracepoint* tp){
     bt->link = (StgBacktrace *)(cap->r.rCurrentBacktrace);
     cap->r.rCurrentBacktrace = (struct StgBacktrace_ *)bt;
 }
+
+void fprintBacktrace(StgBacktrace *bt){
+    while (bt) {
+	fprintf(stderr,"\n %s.%s", bt->tp->module, bt->tp->label);
+	bt = bt->link;
+    }
+    fprintf(stderr,"\n");
+    return;
+}
