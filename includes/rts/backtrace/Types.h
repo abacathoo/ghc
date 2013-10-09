@@ -1,7 +1,7 @@
 /*****************************************************************************/
 /* (c) William Kenyon, 2013						     */
 /* 									     */
-/* Runtime System Backtrace API						     */
+/* Types for Backtraces in the RTS                                           */
 /* 									     */
 /* Do not #include this file directly: #include "Rts.h" instead.	     */
 /* 									     */
@@ -9,8 +9,8 @@
 /*   http://hackage.haskell.org/trac/ghc/wiki/Commentary/SourceTree/Includes */
 /*****************************************************************************/
 
-#ifndef RTS_BACKTRACE_H
-#define RTS_BACKTRACE_H
+#ifndef RTS_BACKTRACE_TYPES_H
+#define RTS_BACKTRACE_TYPES_H
 
 typedef struct {
     char * label;
@@ -18,6 +18,4 @@ typedef struct {
     char * srcloc;
 } Tracepoint;
 
-void pushTracepoint(Capability*,Tracepoint*);
-
-#endif
+#endif /* RTS_BACKTRACE_TYPES_H */

@@ -198,8 +198,10 @@ INLINE_HEADER Time fsecondsToTime (double t)
 #include "rts/prof/CCS.h"
 #include "rts/prof/LDV.h"
 
-/* Backtrace information */
-#include "rts/Backtrace.h"
+/* Backtrace types */
+/* Needs to be included before rts/storage/Closures.h becasue the StgBacktrace*/
+/* heap object depends on the Tracepoint.h type*/
+#include "rts/backtrace/Types.h"
 
 /* Parallel information */
 #include "rts/OSThreads.h"
@@ -220,6 +222,12 @@ INLINE_HEADER Time fsecondsToTime (double t)
 #include "rts/storage/ClosureMacros.h"
 #include "rts/storage/MBlock.h"
 #include "rts/storage/GC.h"
+
+/*Backtrace prototypes*/ 
+/*Needs to be included after rts/storage/Closures.h because it depends on*/
+/*the StgBacktrace heap object*/
+#include "rts/backtrace/Prototypes.h"
+
 
 /* Other RTS external APIs */
 #include "rts/Parallel.h"
