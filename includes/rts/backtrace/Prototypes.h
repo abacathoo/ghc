@@ -14,4 +14,6 @@
 
 void pushTracepoint(Capability*,Tracepoint*);
 
+void fprintBacktrace(StgBacktrace*);
+
 #endif /* RTS_BACKTRACE_PROTOTYPES_H */
