@@ -375,6 +375,7 @@ wanteds = concat
           ,structField_ Both "StgHeader_ldvw" "StgHeader" "prof.hp.ldvw"
 
           ,structSize Both "StgSMPThunkHeader"
+          ,structSize Both "StgBacktraceHeader"           
 
           ,closurePayload C "StgClosure" "payload"
 

@@ -1604,6 +1604,7 @@ emitCloneArray info_p res_r src0 src_off0 n0 = do
 
     let arr = CmmReg (CmmLocal arr_r)
     emitSetDynHdr arr (CmmLit (CmmLabel info_p)) curCCS
+                  False --never add current backtrace to header
     emit $ mkStore (cmmOffsetB dflags arr (fixedHdrSize dflags * wORD_SIZE dflags +
                                            oFFSET_StgMutArrPtrs_ptrs dflags)) n
     emit $ mkStore (cmmOffsetB dflags arr (fixedHdrSize dflags * wORD_SIZE dflags +

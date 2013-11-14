@@ -378,21 +378,21 @@ stg_atomicModifyMutVarzh ( gcptr mv, gcptr f )
    TICK_ALLOC_THUNK_2();
    CCCS_ALLOC(THUNK_2_SIZE);
    z = Hp - THUNK_2_SIZE + WDS(1);
-   SET_HDR(z, stg_ap_2_upd_info, CCCS);
+   SET_HDR_BT(z, stg_ap_2_upd_info, CCCS);
    LDV_RECORD_CREATE(z);
    StgThunk_payload(z,0) = f;
 
    TICK_ALLOC_THUNK_1();
    CCCS_ALLOC(THUNK_1_SIZE);
    y = z - THUNK_1_SIZE;
-   SET_HDR(y, stg_sel_0_upd_info, CCCS);
+   SET_HDR_BT(y, stg_sel_0_upd_info, CCCS);
    LDV_RECORD_CREATE(y);
    StgThunk_payload(y,0) = z;
 
    TICK_ALLOC_THUNK_1();
    CCCS_ALLOC(THUNK_1_SIZE);
    r = y - THUNK_1_SIZE;
-   SET_HDR(r, stg_sel_1_upd_info, CCCS);
+   SET_HDR_BT(r, stg_sel_1_upd_info, CCCS);
    LDV_RECORD_CREATE(r);
    StgThunk_payload(r,0) = z;
 

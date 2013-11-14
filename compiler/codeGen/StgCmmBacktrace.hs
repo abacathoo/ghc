@@ -3,7 +3,8 @@
   --                                              --
   -- (c) William Kenyon 2013                      --
   --------------------------------------------------
-module StgCmmBacktrace (emitPushTracepoint, initTracepoints) where
+module StgCmmBacktrace (emitPushTracepoint, initTracepoints,
+                        curBacktrace) where
 
 #include "HsVersions.h"
 import Util (debugIsOn)
@@ -22,6 +23,7 @@ import DynFlags
 import CLabel
 import FastString
 import Outputable
+import SMRep
 import qualified Module
 
 
@@ -57,3 +59,6 @@ emitTracepointDecl tp = do
              , loc   --char *srcloc
              ]
   emitDataLits (mkCTracepointLabel tp) lits
+
+curBacktrace :: CmmExpr
+curBacktrace = CmmReg (CmmGlobal CurrentBacktrace)

@@ -29,6 +29,7 @@ import StgCmmLayout
 import StgCmmUtils
 import StgCmmMonad
 import StgCmmProf (profDynAlloc, dynProfHdr, staticProfHdr)
+import StgCmmBacktrace (curBacktrace)
 import StgCmmTicky
 import StgCmmClosure
 import StgCmmEnv
@@ -48,7 +49,7 @@ import FastString( mkFastString, fsLit )
 
 import Control.Monad (when)
 import Data.Maybe (isJust)
-
+import Panic
 -----------------------------------------------------------
 --              Initialise dynamic heap objects
 -----------------------------------------------------------
@@ -113,10 +114,14 @@ allocDynClosureCmm mb_id info_tbl lf_info use_cc _blame_cc amodes_w_offsets
 
                 info_ptr = CmmLit (CmmLabel (cit_lbl info_tbl))
 
+        -- SHOULD WE USE BACKTRACEHDR
+        ; let useBacktraceHdr
+                | isStackRep rep = panic "StgCmmHeap.useBacktraceHdr"
+                | otherwise = isThunkRep rep
         -- ALLOCATE THE OBJECT
         ; base <- getHpRelOffset info_offset
         ; emitComment $ mkFastString "allocDynClosure"
-        ; emitSetDynHdr base info_ptr  use_cc
+        ; emitSetDynHdr base info_ptr use_cc useBacktraceHdr
         ; let (cmm_args, offsets) = unzip amodes_w_offsets
         ; hpStore base cmm_args offsets
 
@@ -127,13 +132,15 @@ allocDynClosureCmm mb_id info_tbl lf_info use_cc _blame_cc amodes_w_offsets
         ; getHpRelOffset info_offset
         }
 
-emitSetDynHdr :: CmmExpr -> CmmExpr -> CmmExpr -> FCode ()
-emitSetDynHdr base info_ptr ccs
+emitSetDynHdr :: CmmExpr -> CmmExpr -> CmmExpr -> Bool -> FCode ()
+emitSetDynHdr base info_ptr ccs useBacktraceHdr
   = do dflags <- getDynFlags
        hpStore base (header dflags) [0..]
   where
     header :: DynFlags -> [CmmExpr]
-    header dflags = [info_ptr] ++ dynProfHdr dflags ccs
+    header dflags = [info_ptr]
+                    ++ if useBacktraceHdr then [curBacktrace] else []
+                    ++ dynProfHdr dflags ccs
         -- ToDof: Parallel stuff
         -- No ticky header
 
