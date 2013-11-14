@@ -27,7 +27,7 @@ module SMRep (
 
         -- ** Predicates
         isStaticRep, isConRep, isThunkRep, isFunRep, isStaticNoCafCon,
-        isStackRep,
+        isStackRep, isHeapRep,
 
         -- ** Size-related things
         heapClosureSize,
@@ -234,6 +234,10 @@ isStackRep StackRep{}     = True
 isStackRep (RTSRep _ rep) = isStackRep rep
 isStackRep _              = False
 
+isHeapRep :: SMRep -> Bool
+isHeapRep HeapRep{} = True
+isHeapRep _         = False
+
 isConRep :: SMRep -> Bool
 isConRep (HeapRep _ _ _ Constr{}) = True
 isConRep _                        = False
@@ -286,10 +290,9 @@ arrPtrsHdrSize dflags
 -- Thunks have an extra header word on SMP, so the update doesn't
 -- splat the payload.
 thunkHdrSize :: DynFlags -> WordOff
-thunkHdrSize dflags = fixedHdrSize dflags + smp_hdr
-        where smp_hdr = sIZEOF_StgSMPThunkHeader dflags `quot` wORD_SIZE dflags
-
-
+thunkHdrSize dflags = fixedHdrSize dflags + backtrace_hdr + smp_hdr
+  where smp_hdr = sIZEOF_StgSMPThunkHeader dflags `quot` wORD_SIZE dflags
+        backtrace_hdr = sIZEOF_StgBacktraceHeader dflags `quot` wORD_SIZE dflags
 nonHdrSize :: SMRep -> WordOff
 nonHdrSize (HeapRep _ p np _) = p + np
 nonHdrSize (StackRep bs)      = length bs

@@ -43,6 +43,17 @@ typedef struct {
     StgWord pad;
 } StgSMPThunkHeader;
 
+
+/* -----------------------------------------------------------------------------
+   The Backtrace Header
+
+   Thunks and PAPs need to have the backtrace saved with them
+   -------------------------------------------------------------------------- */
+
+typedef struct {
+    struct StgBacktrace_* bt;
+} StgBacktraceHeader;
+
 /* -----------------------------------------------------------------------------
    The full fixed-size closure header
 
@@ -59,11 +70,20 @@ typedef struct {
 
 typedef struct {
     const StgInfoTable* info;
+    StgBacktraceHeader    bt;
 #ifdef PROFILING
     StgProfHeader         prof;
 #endif
     StgSMPThunkHeader     smp;
 } StgThunkHeader;
+
+typedef struct {
+    const StgInfoTable* info;
+    StgBacktraceHeader    bt;
+#ifdef PROFILING
+    StgProfHeader         prof;
+#endif
+} StgPapHeader;
 
 #define THUNK_EXTRA_HEADER_W (sizeofW(StgThunkHeader)-sizeofW(StgHeader))
 
@@ -93,7 +113,7 @@ typedef struct {
 } StgSelector;
 
 typedef struct {
-    StgHeader   header;
+    StgPapHeader   header;
     StgHalfWord arity;		/* zero if it is an AP */
     StgHalfWord n_args;
     StgClosure *fun;		/* really points to a fun */

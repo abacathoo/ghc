@@ -1036,7 +1036,9 @@ stmtMacros = listToUFM [
 
   ( fsLit "PUSH_UPD_FRAME",        \[sp,e] -> emitPushUpdateFrame sp e ),
   ( fsLit "SET_HDR",               \[ptr,info,ccs] ->
-                                        emitSetDynHdr ptr info ccs ),
+                                        emitSetDynHdr ptr info ccs False),
+  ( fsLit "SET_HDR_BT",            \[ptr,info,ccs] ->
+                                        emitSetDynHdr ptr info ccs True),
   ( fsLit "TICK_ALLOC_PRIM",       \[hdr,goods,slop] ->
                                         tickyAllocPrim hdr goods slop ),
   ( fsLit "TICK_ALLOC_PAP",        \[goods,slop] ->
