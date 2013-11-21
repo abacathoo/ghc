@@ -23,7 +23,6 @@ import DynFlags
 import CLabel
 import FastString
 import Outputable
-import SMRep
 import qualified Module
 
 

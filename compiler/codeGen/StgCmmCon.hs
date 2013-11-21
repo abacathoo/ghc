@@ -93,8 +93,9 @@ cgTopRhsCon dflags id con args =
         ; let closure_rep = mkStaticClosureFields
                              dflags
                              info_tbl
-                             dontCareCCS                -- Because it's static data
-                             caffy                      -- Has CAF refs
+                             dontCareCCS            -- Because it's static data
+                             False                  -- No backtrace
+                             caffy                  -- Has CAF refs
                              payload
 
                 -- BUILD THE OBJECT

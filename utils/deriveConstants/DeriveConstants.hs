@@ -243,6 +243,12 @@ closureFieldOffset w theType theField
     where nameBase = theType ++ "_" ++ theField
           expr = "offsetof(" ++ theType ++ ", " ++ theField ++ ") - TYPE_SIZE(StgHeader)"
 
+funPapSize :: Where -> String -> Wanteds
+funPapSize w theType
+    = defSize w (theType ++ "_NoFunPapHdr") (CExpr expr)
+  ++ closureSize w theType
+    where expr = "TYPE_SIZE(" ++ theType ++ ") - TYPE_SIZE(StgFunPapHeader)"
+
 thunkSize :: Where -> String -> Wanteds
 thunkSize w theType
     = defSize w (theType ++ "_NoThunkHdr") (CExpr expr)

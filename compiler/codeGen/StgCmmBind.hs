@@ -91,7 +91,9 @@ cgTopRhsClosure dflags rec id ccs _ upd_flag args body =
     = do
          cg_info <- getCgIdInfo f
          let closure_rep   = mkStaticClosureFields dflags
-                                    indStaticInfoTable ccs MayHaveCafRefs
+                                    indStaticInfoTable ccs
+                                    False --no backtrace for indirection
+                                    MayHaveCafRefs
                                     [unLit (idInfoToAmode cg_info)]
          emitDataLits closure_label closure_rep
          return ()
@@ -100,12 +102,15 @@ cgTopRhsClosure dflags rec id ccs _ upd_flag args body =
    = do {     -- LAY OUT THE OBJECT
           let name = idName id
         ; mod_name <- getModuleName
+ --       ; MASSERT(not $ isLFThunk lf_info)
         ; let descr         = closureDescription dflags mod_name name
               closure_info  = mkClosureInfo dflags True id lf_info 0 0 descr
 
               caffy         = idCafInfo id
               info_tbl      = mkCmmInfo closure_info -- XXX short-cut
-              closure_rep   = mkStaticClosureFields dflags info_tbl ccs caffy []
+              useBacktraceHdr = isLFReEntrant lf_info
+              closure_rep   = mkStaticClosureFields dflags info_tbl
+                              ccs useBacktraceHdr caffy []
 
                  -- BUILD THE OBJECT, AND GENERATE INFO TABLE (IF NECESSARY)
         ; emitDataLits closure_label closure_rep

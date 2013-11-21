@@ -198,8 +198,7 @@ data CLabel
   | CCS_Label CostCentreStack
 
   | Tracepoint_Label Tracepoint
-
-
+  
   -- | These labels are generated and used inside the NCG only.
   --    They are special variants of a label used for dynamic linking
   --    see module PositionIndependentCode for details.

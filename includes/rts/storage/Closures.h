@@ -83,7 +83,7 @@ typedef struct {
 #ifdef PROFILING
     StgProfHeader         prof;
 #endif
-} StgPapHeader;
+} StgFunPapHeader;
 
 #define THUNK_EXTRA_HEADER_W (sizeofW(StgThunkHeader)-sizeofW(StgHeader))
 
@@ -113,7 +113,7 @@ typedef struct {
 } StgSelector;
 
 typedef struct {
-    StgPapHeader   header;
+    StgFunPapHeader   header;
     StgHalfWord arity;		/* zero if it is an AP */
     StgHalfWord n_args;
     StgClosure *fun;		/* really points to a fun */
