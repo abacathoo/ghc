@@ -199,6 +199,8 @@ rts_apply (Capability *cap, HaskellObj f, HaskellObj arg)
 
     ap = (StgThunk *)allocate(cap,sizeofW(StgThunk) + 2);
     SET_HDR(ap, (StgInfoTable *)&stg_ap_2_upd_info, CCS_SYSTEM);
+    //extern StgBacktrace * rootBacktrace;
+    ap->header.bt.bt = (StgBacktrace *) 1;
     ap->payload[0] = f;
     ap->payload[1] = arg;
     return (StgClosure *)ap;

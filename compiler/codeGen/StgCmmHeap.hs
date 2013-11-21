@@ -22,6 +22,8 @@ module StgCmmHeap (
     ) where
 
 #include "HsVersions.h"
+import Util (debugIsOn)
+--for asserts
 
 import StgSyn
 import CLabel
@@ -115,9 +117,8 @@ allocDynClosureCmm mb_id info_tbl lf_info use_cc _blame_cc amodes_w_offsets
                 info_ptr = CmmLit (CmmLabel (cit_lbl info_tbl))
 
         -- SHOULD WE USE BACKTRACEHDR
-        ; let useBacktraceHdr
-                | isStackRep rep = panic "StgCmmHeap.useBacktraceHdr"
-                | otherwise = isThunkRep rep
+        ; MASSERT(not $ isStackRep rep)
+        ; let useBacktraceHdr = isThunkRep rep || isFunRep rep
         -- ALLOCATE THE OBJECT
         ; base <- getHpRelOffset info_offset
         ; emitComment $ mkFastString "allocDynClosure"
@@ -163,11 +164,12 @@ mkStaticClosureFields
         :: DynFlags
         -> CmmInfoTable
         -> CostCentreStack
+        -> Bool -- Does the static closure have a backtrace feild in Hdr
         -> CafInfo
         -> [CmmLit]             -- Payload
         -> [CmmLit]             -- The full closure
-mkStaticClosureFields dflags info_tbl ccs caf_refs payload
-  = mkStaticClosure dflags info_lbl ccs payload padding
+mkStaticClosureFields dflags info_tbl ccs useBacktraceHdr caf_refs payload
+  = mkStaticClosure dflags info_lbl ccs useBacktraceHdr payload padding
         static_link_field saved_info_field
   where
     info_lbl = cit_lbl info_tbl
@@ -208,11 +210,14 @@ mkStaticClosureFields dflags info_tbl ccs caf_refs payload
         | otherwise                = mkIntCLit dflags 1  -- No CAF refs
 
 
-mkStaticClosure :: DynFlags -> CLabel -> CostCentreStack -> [CmmLit]
-  -> [CmmLit] -> [CmmLit] -> [CmmLit] -> [CmmLit]
-mkStaticClosure dflags info_lbl ccs payload padding static_link_field saved_info_field
+mkStaticClosure :: DynFlags -> CLabel -> CostCentreStack ->
+                   Bool -> -- Use backtrace slot in header?
+                   [CmmLit] -> [CmmLit] -> [CmmLit] -> [CmmLit] -> [CmmLit]
+mkStaticClosure dflags info_lbl ccs useBacktraceHdr payload padding
+                static_link_field saved_info_field
   =  [CmmLabel info_lbl]
   ++ staticProfHdr dflags ccs
+--  ++ if useBacktraceHdr then [CmmInt 1 W8] else []
   ++ concatMap (padLitToWord dflags) payload
   ++ padding
   ++ static_link_field
