@@ -441,7 +441,7 @@ cgCase scrut bndr alt_type alts
              gc_plan = if do_gc then GcInAlts alt_regs else NoGcInAlts
 
        ; mb_cc <- maybeSaveCostCentre simple_scrut
-
+       ; mb_bt <- maybeSaveBacktrace simple_scrut
        -- if do_gc then our sequel will be ReturnTo
        --   - generate code for the sequel now
        --   - pass info about the sequel to cgAlts for use in the heap check
@@ -449,6 +449,7 @@ cgCase scrut bndr alt_type alts
 
        ; ret_kind <- withSequel (AssignTo alt_regs False) (cgExpr scrut)
        ; restoreCurrentCostCentre mb_cc
+       ; maybeRestoreBacktrace mb_bt
        ; _ <- bindArgsToRegs ret_bndrs
        ; cgAlts (gc_plan,ret_kind) (NonVoid bndr) alt_type alts
        }
@@ -460,6 +461,14 @@ maybeSaveCostCentre simple_scrut
   | simple_scrut = return Nothing
   | otherwise    = saveCurrentCostCentre
 
+maybeSaveBacktrace :: Bool -> FCode (Maybe LocalReg)
+maybeSaveBacktrace simple_scrut
+  | simple_scrut = return Nothing
+  | otherwise    = saveCurrentBacktrace >>= \a -> return $ Just a
+
+maybeRestoreBacktrace :: Maybe LocalReg -> FCode ()
+maybeRestoreBacktrace (Just bt) = restoreCurrentBacktrace bt
+maybeRestoreBacktrace Nothing   = return ()
 
 -----------------
 isSimpleScrut :: StgExpr -> AltType -> Bool
