@@ -4,7 +4,8 @@
   -- (c) William Kenyon 2013                      --
   --------------------------------------------------
 module StgCmmBacktrace (emitPushTracepoint, initTracepoints,
-                        curBacktrace) where
+                        curBacktrace,
+                        saveCurrentBacktrace, restoreCurrentBacktrace) where
 
 #include "HsVersions.h"
 import Util (debugIsOn)
@@ -14,6 +15,7 @@ import StgCmmMonad
 import StgCmmForeign
 import StgCmmUtils
 
+import MkGraph
 import CmmExpr
 import CmmUtils
 
@@ -25,6 +27,19 @@ import FastString
 import Outputable
 import qualified Module
 
+btType :: DynFlags -> CmmType
+btType = bWord
+
+saveCurrentBacktrace :: FCode LocalReg
+saveCurrentBacktrace = do
+  dflags <- getDynFlags
+  local_bt <- newTemp (btType dflags)
+  emitAssign (CmmLocal local_bt) curBacktrace
+  return local_bt
+
+restoreCurrentBacktrace :: LocalReg -> FCode ()
+restoreCurrentBacktrace local_bt = emit $ assignCurBacktrace $ CmmReg $
+                                     CmmLocal local_bt
 
 emitPushTracepoint :: Tracepoint -> FCode ()
 emitPushTracepoint tp = do
@@ -61,3 +76,6 @@ emitTracepointDecl tp = do
 
 curBacktrace :: CmmExpr
 curBacktrace = CmmReg (CmmGlobal CurrentBacktrace)
+
+assignCurBacktrace :: CmmExpr -> CmmAGraph
+assignCurBacktrace = mkAssign $ CmmGlobal CurrentBacktrace
