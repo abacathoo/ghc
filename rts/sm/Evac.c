@@ -775,7 +775,7 @@ unchain_thunk_selectors(StgSelector *p, StgClosure *val)
     prev = NULL;
     while (p)
     {
-        ASSERT(p->header.info == &stg_WHITEHOLE_info);
+        ASSERT(((StgClosure*)p)->header.info == &stg_WHITEHOLE_info);
         // val must be in to-space.  Not always: when we recursively
         // invoke eval_thunk_selector(), the recursive calls will not 
         // evacuate the value (because we want to select on the value,
@@ -880,7 +880,8 @@ selector_chain:
     // thunk while we evaluate it.
     {
         do {
-            info_ptr = xchg((StgPtr)&p->header.info, (W_)&stg_WHITEHOLE_info);
+            info_ptr = xchg((StgPtr)&((StgClosure*)p)->header.info,
+                         (W_)&stg_WHITEHOLE_info);
         } while (info_ptr == (W_)&stg_WHITEHOLE_info);
 
         // make sure someone else didn't get here first...
@@ -904,7 +905,7 @@ selector_chain:
     }
 #else
     // Save the real info pointer (NOTE: not the same as get_itbl()).
-    info_ptr = (StgWord)p->header.info;
+    info_ptr = (StgWord)((StgClosure *)p)->header.info;
     SET_INFO((StgClosure *)p,&stg_WHITEHOLE_info);
 #endif
 
