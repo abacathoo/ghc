@@ -27,34 +27,6 @@ typedef struct {
 } StgProfHeader;
 
 /* -----------------------------------------------------------------------------
-   The SMP header
-   
-   A thunk has a padding word to take the updated value.  This is so
-   that the update doesn't overwrite the payload, so we can avoid
-   needing to lock the thunk during entry and update.
-   
-   Note: this doesn't apply to THUNK_STATICs, which have no payload.
-
-   Note: we leave this padding word in all ways, rather than just SMP,
-   so that we don't have to recompile all our libraries for SMP.
-   -------------------------------------------------------------------------- */
-
-typedef struct {
-    StgWord pad;
-} StgSMPThunkHeader;
-
-
-/* -----------------------------------------------------------------------------
-   The Backtrace Header
-
-   Thunks and PAPs need to have the backtrace saved with them
-   -------------------------------------------------------------------------- */
-
-typedef struct {
-    struct StgBacktrace_* bt;
-} StgBacktraceHeader;
-
-/* -----------------------------------------------------------------------------
    The full fixed-size closure header
 
    The size of the fixed header is the sum of the optional parts plus a single
@@ -68,22 +40,34 @@ typedef struct {
 #endif
 } StgHeader;
 
-typedef struct {
-    const StgInfoTable* info;
-    StgBacktraceHeader    bt;
-#ifdef PROFILING
-    StgProfHeader         prof;
-#endif
-    StgSMPThunkHeader     smp;
-} StgThunkHeader;
+/* -----------------------------------------------------------------------------
+   The Backtrace Header
+
+   Thunks funs and PAPs need to have the backtrace saved with them
+   -------------------------------------------------------------------------- */
 
 typedef struct {
-    const StgInfoTable* info;
-    StgBacktraceHeader    bt;
-#ifdef PROFILING
-    StgProfHeader         prof;
-#endif
-} StgFunPapHeader;
+    StgHeader             header;
+    struct StgBacktrace_*     bt;
+} StgBacktraceHeader;
+
+/* -----------------------------------------------------------------------------
+   The SMP header
+   
+   A thunk has a padding word to take the updated value.  This is so
+   that the update doesn't overwrite the payload, so we can avoid
+   needing to lock the thunk during entry and update.
+   
+   Note: this doesn't apply to THUNK_STATICs, which have no payload.
+
+   Note: we leave this padding word in all ways, rather than just SMP,
+   so that we don't have to recompile all our libraries for SMP.
+   -------------------------------------------------------------------------- */
+
+typedef struct {
+    StgBacktraceHeader    bt_header;
+    StgWord               pad;
+} StgThunkHeader;
 
 #define THUNK_EXTRA_HEADER_W (sizeofW(StgThunkHeader)-sizeofW(StgHeader))
 
@@ -103,17 +87,17 @@ typedef struct StgClosure_ {
 } *StgClosurePtr; // StgClosure defined in rts/Types.h
 
 typedef struct {
-    StgThunkHeader  header;
+    StgThunkHeader  thunk_header;
     struct StgClosure_ *payload[FLEXIBLE_ARRAY];
 } StgThunk;
 
 typedef struct {
-    StgThunkHeader   header;
+    StgThunkHeader   thunk_header;
     StgClosure *selectee;
 } StgSelector;
 
 typedef struct {
-    StgFunPapHeader   header;
+    StgBacktraceHeader   backtrace_header;
     StgHalfWord arity;		/* zero if it is an AP */
     StgHalfWord n_args;
     StgClosure *fun;		/* really points to a fun */
@@ -121,7 +105,7 @@ typedef struct {
 } StgPAP;
 
 typedef struct {
-    StgThunkHeader   header;
+    StgBacktraceHeader   backtrace_header;
     StgHalfWord arity;		/* zero if it is an AP */
     StgHalfWord n_args;
     StgClosure *fun;		/* really points to a fun */
@@ -129,7 +113,7 @@ typedef struct {
 } StgAP;
 
 typedef struct {
-    StgThunkHeader   header;
+    StgThunkHeader   thunk_header;
     StgWord     size;                    /* number of words in payload */
     StgClosure *fun;
     StgClosure *payload[FLEXIBLE_ARRAY]; /* contains a chunk of *stack* */

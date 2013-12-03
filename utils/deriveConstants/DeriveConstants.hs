@@ -243,12 +243,6 @@ closureFieldOffset w theType theField
     where nameBase = theType ++ "_" ++ theField
           expr = "offsetof(" ++ theType ++ ", " ++ theField ++ ") - TYPE_SIZE(StgHeader)"
 
-funPapSize :: Where -> String -> Wanteds
-funPapSize w theType
-    = defSize w (theType ++ "_NoFunPapHdr") (CExpr expr)
-  ++ closureSize w theType
-    where expr = "TYPE_SIZE(" ++ theType ++ ") - TYPE_SIZE(StgFunPapHeader)"
-
 thunkSize :: Where -> String -> Wanteds
 thunkSize w theType
     = defSize w (theType ++ "_NoThunkHdr") (CExpr expr)
@@ -277,11 +271,11 @@ haskellise "" = ""
 wanteds :: Wanteds
 wanteds = concat
           [-- Closure header sizes.
-           constantWord Both "STD_HDR_SIZE"
-                             -- grrr.. PROFILING is on so we need to
-                             -- subtract sizeofW(StgProfHeader)
-                             "sizeofW(StgHeader) - sizeofW(StgProfHeader)"
+           constantWord Both "HDR_SIZE" "sizeofW(StgHeader)"
+                             -- Profiling is on so this includes profiling hdr
           ,constantWord Both "PROF_HDR_SIZE" "sizeofW(StgProfHeader)"
+          ,constantWord Both "BACKTRACE_HDR_SIZE" "sizeofW(StgBacktraceHeader)"
+          ,constantWord Both "THUNK_HDR_SIZE" "sizeofW(StgThunkHeader)"
 
            -- Size of a storage manager block (in bytes).
           ,constantWord Both "BLOCK_SIZE"  "BLOCK_SIZE"
@@ -380,7 +374,6 @@ wanteds = concat
           ,structField_ Both "StgHeader_ccs" "StgHeader" "prof.ccs"
           ,structField_ Both "StgHeader_ldvw" "StgHeader" "prof.hp.ldvw"
 
-          ,structSize Both "StgSMPThunkHeader"
           ,structSize Both "StgBacktraceHeader"           
 
           ,closurePayload C "StgClosure" "payload"

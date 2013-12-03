@@ -140,8 +140,9 @@ emitSetDynHdr base info_ptr ccs useBacktraceHdr
   where
     header :: DynFlags -> [CmmExpr]
     header dflags = [info_ptr]
-                    ++ if useBacktraceHdr then [curBacktrace] else []
                     ++ dynProfHdr dflags ccs
+                    ++ if useBacktraceHdr then [curBacktrace] else []
+
         -- ToDof: Parallel stuff
         -- No ticky header
 

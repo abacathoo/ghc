@@ -1306,6 +1306,13 @@ initEnv :: DynFlags -> Env
 initEnv dflags = listToUFM [
   ( fsLit "SIZEOF_StgHeader",
     VarN (CmmLit (CmmInt (fromIntegral (fixedHdrSize dflags * wORD_SIZE dflags)) (wordWidth dflags)) )),
+
+  ( fsLit "SIZEOF_StgBacktraceHeader",
+    VarN (CmmLit (CmmInt (fromIntegral (backtraceHdrSize dflags * wORD_SIZE dflags)) (wordWidth dflags)) )),
+
+  ( fsLit "SIZEOF_StgThunkHeader",
+    VarN (CmmLit (CmmInt (fromIntegral (thunkHdrSize dflags * wORD_SIZE dflags)) (wordWidth dflags)) )),
+
   ( fsLit "SIZEOF_StgInfoTable",
     VarN (CmmLit (CmmInt (fromIntegral (stdInfoTableSizeB dflags)) (wordWidth dflags)) ))
   ]

@@ -138,7 +138,7 @@ INLINE_HEADER StgHalfWord GET_TAG(const StgClosure *con) {
 
 #define SET_HDR(c,_info,ccs)				\
    {							\
-	(c)->header.info = _info;			\
+       ((StgClosure *)(c))->header.info = _info;	\
 	SET_PROF_HDR((StgClosure *)(c),ccs);		\
    }
 
