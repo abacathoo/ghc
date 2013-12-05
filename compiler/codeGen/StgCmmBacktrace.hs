@@ -5,7 +5,8 @@
   --------------------------------------------------
 module StgCmmBacktrace (emitPushTracepoint, initTracepoints,
                         curBacktrace,
-                        saveCurrentBacktrace, restoreCurrentBacktrace) where
+                        saveCurrentBacktrace, restoreCurrentBacktrace,
+                        enterBacktraceThunk, enterBacktraceFun) where
 
 #include "HsVersions.h"
 import Util (debugIsOn)
@@ -40,6 +41,28 @@ saveCurrentBacktrace = do
 restoreCurrentBacktrace :: LocalReg -> FCode ()
 restoreCurrentBacktrace local_bt = emit $ assignCurBacktrace $ CmmReg $
                                      CmmLocal local_bt
+
+enterBacktraceThunk :: CmmExpr -> FCode ()
+enterBacktraceThunk closure = do
+  dflags <- getDynFlags
+  emit $ assignCurBacktrace $ backtraceFrom dflags closure
+
+
+enterBacktraceFun :: Bool -> CmmExpr -> FCode ()
+enterBacktraceFun True  _       = return () -- top-level function, nothing to do
+enterBacktraceFun False closure = do
+  dflags <- getDynFlags
+  emitRtsCall Module.rtsPackageId (fsLit "enterFunBacktrace")
+    [(CmmReg (CmmGlobal BaseReg), AddrHint),
+     (backtraceFrom dflags closure, AddrHint)] False
+
+backtraceFrom :: DynFlags
+              -> CmmExpr --A closure pointer
+              -> CmmExpr --The backtrace from that closure
+backtraceFrom dflags cl =
+  CmmLoad (cmmOffsetB dflags cl (oFFSET_StgBacktraceHeader_bt dflags))
+    (btType dflags)
+
 
 emitPushTracepoint :: Tracepoint -> FCode ()
 emitPushTracepoint tp = do

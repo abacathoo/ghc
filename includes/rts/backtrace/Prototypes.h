@@ -13,7 +13,7 @@
 #define RTS_BACKTRACE_PROTOTYPES_H
 
 void pushTracepoint(Capability*,Tracepoint*);
-
+void enterFunBacktrace(StgRegTable*,StgBacktrace*);
 void fprintBacktrace(StgBacktrace*);
 
 #endif /* RTS_BACKTRACE_PROTOTYPES_H */

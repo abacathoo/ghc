@@ -207,6 +207,7 @@ import StgCmmClosure
 import StgCmmLayout     hiding (ArgRep(..))
 import StgCmmTicky
 import StgCmmBind       ( emitBlackHoleCode, emitUpdateFrame )
+import StgCmmBacktrace
 
 import MkGraph
 import Cmm
@@ -1011,6 +1012,7 @@ stmtMacros :: UniqFM ([CmmExpr] -> FCode ())
 stmtMacros = listToUFM [
   ( fsLit "CCS_ALLOC",             \[words,ccs]  -> profAlloc words ccs ),
   ( fsLit "ENTER_CCS_THUNK",       \[e] -> enterCostCentreThunk e ),
+  ( fsLit "ENTER_BACKTRACE_THUNK", \[e] -> enterBacktraceThunk e ),
 
   ( fsLit "CLOSE_NURSERY",         \[]  -> emitCloseNursery ),
   ( fsLit "OPEN_NURSERY",          \[]  -> emitOpenNursery ),

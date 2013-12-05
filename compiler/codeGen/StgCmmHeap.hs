@@ -214,7 +214,7 @@ mkStaticClosureFields dflags info_tbl ccs useBacktraceHdr caf_refs payload
 mkStaticClosure :: DynFlags -> CLabel -> CostCentreStack ->
                    Bool -> -- Use backtrace slot in header?
                    [CmmLit] -> [CmmLit] -> [CmmLit] -> [CmmLit] -> [CmmLit]
-mkStaticClosure dflags info_lbl ccs useBacktraceHdr payload padding
+mkStaticClosure dflags info_lbl ccs _useBacktraceHdr payload padding
                 static_link_field saved_info_field
   =  [CmmLabel info_lbl]
   ++ staticProfHdr dflags ccs

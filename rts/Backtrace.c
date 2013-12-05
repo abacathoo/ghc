@@ -17,6 +17,11 @@ pushTracepoint(Capability* cap, Tracepoint* tp){
     cap->r.rCurrentBacktrace = (struct StgBacktrace_ *)bt;
 }
 
+void
+enterFunBacktrace(StgRegTable* tab,StgBacktrace* bt){
+    return;
+}
+
 void fprintBacktrace(StgBacktrace *bt){
     while (bt) {
 	fprintf(stderr,"\n %s.%s", bt->tp->module, bt->tp->label);

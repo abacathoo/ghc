@@ -86,7 +86,7 @@ stg_PAP_apply /* no args => explicit stack */
 #ifdef PROFILING
   ccall enterFunCCS(BaseReg "ptr", StgHeader_ccs(pap) "ptr");
 #endif
-
+  ccall enterFunBacktrace(BaseReg "ptr", StgBacktraceHeader_bt(pap) "ptr");
   // Reload the stack 
   W_ i;
   W_ p;
