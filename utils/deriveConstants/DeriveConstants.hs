@@ -373,8 +373,8 @@ wanteds = concat
           ,structField C     "StgHeader" "info"
           ,structField_ Both "StgHeader_ccs" "StgHeader" "prof.ccs"
           ,structField_ Both "StgHeader_ldvw" "StgHeader" "prof.hp.ldvw"
-
-          ,structSize Both "StgBacktraceHeader"           
+          ,structField_ Both "StgBacktraceHeader_bt" "StgBacktraceHeader"
+                                "bt"
 
           ,closurePayload C "StgClosure" "payload"
 

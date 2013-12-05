@@ -20,8 +20,9 @@ import StgCmmMonad
 import StgCmmEnv
 import StgCmmCon
 import StgCmmHeap
-import StgCmmProf (curCCS, ldvEnterClosure, enterCostCentreFun, enterCostCentreThunk,
-                   initUpdFrameProf, costCentreFrom)
+import StgCmmProf (curCCS, ldvEnterClosure, enterCostCentreFun,
+                   enterCostCentreThunk,initUpdFrameProf, costCentreFrom)
+import StgCmmBacktrace (enterBacktraceThunk, enterBacktraceFun)
 import StgCmmTicky
 import StgCmmLayout
 import StgCmmUtils
@@ -498,10 +499,13 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                 ; entryHeapCheck cl_info node' arity arg_regs $ do
                 { -- ticky after heap check to avoid double counting
                   tickyEnterFun cl_info
-                ; enterCostCentreFun cc
-                    (CmmMachOp (mo_wordSub dflags)
+                ; let closure = CmmMachOp (mo_wordSub dflags)
                          [ CmmReg nodeReg
-                         , mkIntExpr dflags (funTag dflags cl_info) ])
+                         , mkIntExpr dflags (funTag dflags cl_info) ]
+                ; enterCostCentreFun cc closure
+--                ; if isBacktraceClosure cl_info && (not $ isStaticClosure cl_info)
+--                    then enterBacktraceFun top_lvl closure
+--                    else return ()
                 ; fv_bindings <- mapM bind_fv fv_details
                 -- Load free vars out of closure *after*
                 -- heap check, to reduce live vars over check
@@ -574,6 +578,9 @@ thunkCode cl_info fv_details _cc node arity body
             -- subsumed by this enclosing cc
             do { tickyEnterThunk cl_info
                ; enterCostCentreThunk (CmmReg nodeReg)
+--               ; if isBacktraceClosure cl_info && (not $ isStaticClosure cl_info
+--                   then enterBacktraceThunk (CmmReg nodeReg)
+--                   else return ()
                ; let lf_info = closureLFInfo cl_info
                ; fv_bindings <- mapM bind_fv fv_details
                ; load_fvs node lf_info fv_bindings

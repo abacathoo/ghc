@@ -52,6 +52,7 @@ module StgCmmClosure (
 
         blackHoleOnEntry,  -- Needs LambdaFormInfo and SMRep
         isStaticClosure,   -- Needs SMPre
+        isBacktraceClosure,
 
         -- * InfoTables
         mkDataConInfoTable,
@@ -788,6 +789,9 @@ blackHoleOnEntry cl_info
 
 isStaticClosure :: ClosureInfo -> Bool
 isStaticClosure cl_info = isStaticRep (closureSMRep cl_info)
+
+isBacktraceClosure :: ClosureInfo -> Bool
+isBacktraceClosure cl_info = isBacktraceRep (closureSMRep cl_info)
 
 closureUpdReqd :: ClosureInfo -> Bool
 closureUpdReqd ClosureInfo{ closureLFInfo = lf_info } = lfUpdatable lf_info

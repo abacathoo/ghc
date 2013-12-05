@@ -27,7 +27,7 @@ module SMRep (
 
         -- ** Predicates
         isStaticRep, isConRep, isThunkRep, isFunRep, isStaticNoCafCon,
-        isStackRep, isHeapRep,
+        isStackRep, isHeapRep, isBacktraceRep,
 
         -- ** Size-related things
         heapClosureSize,
@@ -248,6 +248,12 @@ isThunkRep (HeapRep _ _ _ ThunkSelector{}) = True
 isThunkRep (HeapRep _ _ _ BlackHole{})     = True
 isThunkRep (HeapRep _ _ _ IndStatic{})     = True
 isThunkRep _                               = False
+
+isBacktraceRep :: SMRep ->Bool
+isBacktraceRep (HeapRep _ _ _ Thunk{}) = True
+isBacktraceRep (HeapRep _ _ _ ThunkSelector{}) = True
+isBacktraceRep (HeapRep _ _ _ Fun{}) = True
+isBacktraceRep _ = error "SMRep.isBacktraceRep"
 
 isFunRep :: SMRep -> Bool
 isFunRep (HeapRep _ _ _ Fun{}) = True
