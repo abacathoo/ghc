@@ -30,3 +30,15 @@ void fprintBacktrace(StgBacktrace *bt){
     fprintf(stderr,"\n");
     return;
 }
+
+Tracepoint rootTracepoint = {"Root","Root","Root"};
+
+#ifdef PROFILING
+StgBacktrace rootBacktrace = {{&stg_Backtrace_info,{CCS_SYSTEM,{0}}},
+			     0,
+			     &rootTracepoint};
+#else
+StgBacktrace rootBacktrace = {{&stg_Backtrace_info},
+			      0,
+			      &rootTracepoint};
+#endif

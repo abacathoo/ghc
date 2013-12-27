@@ -287,7 +287,7 @@ initCapability( Capability *cap, nat i )
 #else
     cap->r.rCCCS = NULL;
 #endif
-
+    cap->r.rCurrentBacktrace = &rootBacktrace;
     traceCapCreate(cap);
     traceCapsetAssignCap(CAPSET_OSPROCESS_DEFAULT, i);
     traceCapsetAssignCap(CAPSET_CLOCKDOMAIN_DEFAULT, i);
