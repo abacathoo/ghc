@@ -1698,7 +1698,7 @@ stg_newBCOzh ( P_ instrs,
     ALLOC_PRIM (bytes);
 
     bco = Hp - bytes + WDS(1);
-    SET_HDR(bco, stg_BCO_info, CCCS);
+    SET_HDR_BT(bco, stg_BCO_info, CCCS);
 
     StgBCO_instrs(bco)     = instrs;
     StgBCO_literals(bco)   = literals;
@@ -1734,7 +1734,7 @@ stg_mkApUpd0zh ( P_ bco )
     CCCS_ALLOC(SIZEOF_StgAP);
 
     ap = Hp - SIZEOF_StgAP + WDS(1);
-    SET_HDR(ap, stg_AP_info, CCCS);
+    SET_HDR_BT(ap, stg_AP_info, CCCS);
 
     StgAP_n_args(ap) = HALF_W_(0);
     StgAP_fun(ap) = bco;

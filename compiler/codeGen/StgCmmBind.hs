@@ -503,7 +503,7 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                          [ CmmReg nodeReg
                          , mkIntExpr dflags (funTag dflags cl_info) ]
                 ; enterCostCentreFun cc closure
-                ; MASSERT(isFunRep cl_info)
+                ; MASSERT(isFunClosure cl_info)
                 ; if not $ isStaticClosure cl_info
                     then enterBacktraceFun top_lvl closure
                     else return ()
