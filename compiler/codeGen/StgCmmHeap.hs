@@ -218,7 +218,6 @@ mkStaticClosure dflags info_lbl ccs _useBacktraceHdr payload padding
                 static_link_field saved_info_field
   =  [CmmLabel info_lbl]
   ++ staticProfHdr dflags ccs
---  ++ if useBacktraceHdr then [CmmInt 1 W8] else []
   ++ concatMap (padLitToWord dflags) payload
   ++ padding
   ++ static_link_field

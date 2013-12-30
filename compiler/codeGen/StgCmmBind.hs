@@ -503,9 +503,10 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                          [ CmmReg nodeReg
                          , mkIntExpr dflags (funTag dflags cl_info) ]
                 ; enterCostCentreFun cc closure
---                ; if isBacktraceClosure cl_info && (not $ isStaticClosure cl_info)
---                    then enterBacktraceFun top_lvl closure
---                    else return ()
+                ; MASSERT(isFunRep cl_info)
+                ; if not $ isStaticClosure cl_info
+                    then enterBacktraceFun top_lvl closure
+                    else return ()
                 ; fv_bindings <- mapM bind_fv fv_details
                 -- Load free vars out of closure *after*
                 -- heap check, to reduce live vars over check
@@ -578,9 +579,7 @@ thunkCode cl_info fv_details _cc node arity body
             -- subsumed by this enclosing cc
             do { tickyEnterThunk cl_info
                ; enterCostCentreThunk (CmmReg nodeReg)
---               ; if isBacktraceClosure cl_info && (not $ isStaticClosure cl_info
---                   then enterBacktraceThunk (CmmReg nodeReg)
---                   else return ()
+--               ; enterBacktraceThunk (CmmReg nodeReg)
                ; let lf_info = closureLFInfo cl_info
                ; fv_bindings <- mapM bind_fv fv_details
                ; load_fvs node lf_info fv_bindings
