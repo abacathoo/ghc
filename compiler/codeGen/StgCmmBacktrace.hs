@@ -60,8 +60,14 @@ backtraceFrom :: DynFlags
               -> CmmExpr --A closure pointer
               -> CmmExpr --The backtrace from that closure
 backtraceFrom dflags cl =
-  CmmLoad (cmmOffsetB dflags cl (oFFSET_StgBacktraceHeader_bt dflags))
+  CmmLoad (cmmOffsetB dflags cl (offsetBt dflags))
     (btType dflags)
+
+offsetBt :: DynFlags -> Int
+offsetBt dflags
+  | gopt Opt_SccProfilingOn dflags = oFFSET_StgBacktraceHeader_bt dflags
+  | otherwise = oFFSET_StgBacktraceHeader_bt dflags -
+                (wORD_SIZE dflags * pROF_HDR_SIZE dflags)
 
 
 emitPushTracepoint :: Tracepoint -> FCode ()
