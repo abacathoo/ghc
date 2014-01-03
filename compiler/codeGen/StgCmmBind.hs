@@ -579,7 +579,10 @@ thunkCode cl_info fv_details _cc node arity body
             -- subsumed by this enclosing cc
             do { tickyEnterThunk cl_info
                ; enterCostCentreThunk (CmmReg nodeReg)
---               ; enterBacktraceThunk (CmmReg nodeReg)
+               ; MASSERT(isThunkClosure cl_info)
+               ; if not $ isStaticClosure cl_info
+                    then enterBacktraceThunk (CmmReg nodeReg)     
+                    else return ()                 
                ; let lf_info = closureLFInfo cl_info
                ; fv_bindings <- mapM bind_fv fv_details
                ; load_fvs node lf_info fv_bindings
