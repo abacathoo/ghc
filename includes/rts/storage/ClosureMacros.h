@@ -258,6 +258,11 @@ INLINE_HEADER rtsBool LOOKS_LIKE_CLOSURE_PTR (void *p)
     return LOOKS_LIKE_INFO_PTR((StgWord)(UNTAG_CLOSURE((StgClosure *)(p)))->header.info);
 }
 
+INLINE_HEADER rtsBool HAS_VALID_BACKTRACE_HEADER (void *p)
+{
+    return isValidBacktrace(((StgBacktraceHeader*) p)->bt);
+}
+
 /* -----------------------------------------------------------------------------
    Macros for calculating the size of a closure
    -------------------------------------------------------------------------- */

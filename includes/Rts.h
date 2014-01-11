@@ -219,14 +219,17 @@ INLINE_HEADER Time fsecondsToTime (double t)
 #include "stg/MiscClosures.h" /* InfoTables, closures etc. defined in the RTS */
 #include "rts/storage/SMPClosureOps.h"
 #include "rts/storage/Block.h"
+
+
+    /*Backtrace prototypes*/ 
+    /*Needs to be included after rts/storage/Closures.h because it depends on*/
+    /*the StgBacktrace heap object*/
+#include "rts/backtrace/Prototypes.h"
+
+
 #include "rts/storage/ClosureMacros.h"
 #include "rts/storage/MBlock.h"
 #include "rts/storage/GC.h"
-
-/*Backtrace prototypes*/ 
-/*Needs to be included after rts/storage/Closures.h because it depends on*/
-/*the StgBacktrace heap object*/
-#include "rts/backtrace/Prototypes.h"
 
 
 /* Other RTS external APIs */

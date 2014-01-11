@@ -257,6 +257,7 @@ checkClosure( StgClosure* p )
     case THUNK_0_2:
     case THUNK_2_0:
       {
+        ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
 	nat i;
 	for (i = 0; i < info->layout.payload.ptrs; i++) {
 	  ASSERT(LOOKS_LIKE_CLOSURE_PTR(((StgThunk *)p)->payload[i]));
@@ -270,6 +271,14 @@ checkClosure( StgClosure* p )
     case FUN_1_1:
     case FUN_0_2:
     case FUN_2_0:
+
+    case THUNK_STATIC:
+    case FUN_STATIC:
+
+      {
+        ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
+      }
+
     case CONSTR:
     case CONSTR_1_0:
     case CONSTR_0_1:
@@ -285,8 +294,7 @@ checkClosure( StgClosure* p )
     case TVAR:
     case CONSTR_STATIC:
     case CONSTR_NOCAF_STATIC:
-    case THUNK_STATIC:
-    case FUN_STATIC:
+
 	{
 	    nat i;
 	    for (i = 0; i < info->layout.payload.ptrs; i++) {
@@ -314,6 +322,7 @@ checkClosure( StgClosure* p )
     }
 
     case BCO: {
+        ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
 	StgBCO *bco = (StgBCO *)p;
 	ASSERT(LOOKS_LIKE_CLOSURE_PTR(bco->instrs));
 	ASSERT(LOOKS_LIKE_CLOSURE_PTR(bco->literals));
@@ -340,6 +349,7 @@ checkClosure( StgClosure* p )
       }
 
     case THUNK_SELECTOR:
+            ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
 	    ASSERT(LOOKS_LIKE_CLOSURE_PTR(((StgSelector *)p)->selectee));
 	    return THUNK_SELECTOR_sizeW();
 
@@ -367,6 +377,7 @@ checkClosure( StgClosure* p )
 
     case AP:
     {
+        ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
 	StgAP* ap = (StgAP *)p;
 	checkPAP (ap->fun, ap->payload, ap->n_args);
 	return ap_sizeW(ap);
@@ -374,6 +385,7 @@ checkClosure( StgClosure* p )
 
     case PAP:
     {
+        ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
 	StgPAP* pap = (StgPAP *)p;
 	checkPAP (pap->fun, pap->payload, pap->n_args);
 	return pap_sizeW(pap);
