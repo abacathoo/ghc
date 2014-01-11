@@ -14,6 +14,7 @@ pushTracepoint(Capability* cap, Tracepoint* tp){
     SET_HDR(bt,&stg_Backtrace_info,CCS_SYSTEM /*TODO*/);
     bt->tp = tp;
     bt->link = (StgBacktrace *)(cap->r.rCurrentBacktrace);
+    bt->depth = ((cap->r).rCurrentBacktrace)->depth + 1;
     cap->r.rCurrentBacktrace = (struct StgBacktrace_ *)bt;
 }
 
@@ -50,10 +51,12 @@ Tracepoint rootTracepoint = {"Root","Root","Root"};
 
 #ifdef PROFILING
 StgBacktrace rootBacktrace = {{&stg_Backtrace_info,{CCS_SYSTEM,{0}}},
-			     0,
+	                     0, //depth
+                             0, //link pointer
 			     &rootTracepoint};
 #else
 StgBacktrace rootBacktrace = {{&stg_Backtrace_info},
-			      0,
-			      &rootTracepoint};
+                             0, //depth
+                             0, //link pointer
+                             &rootTracepoint};
 #endif
