@@ -244,6 +244,7 @@ typedef struct {
 
 typedef struct StgBacktrace_ {
     StgHeader header;
+    int depth;
     struct StgBacktrace_ *link;
     Tracepoint *tp;
 } StgBacktrace;
