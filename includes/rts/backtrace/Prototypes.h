@@ -15,6 +15,7 @@
 void pushTracepoint(Capability*,Tracepoint*);
 void enterFunBacktrace(StgRegTable*,StgBacktrace*);
 void fprintBacktrace(StgBacktrace*);
+rtsBool isValidBacktrace(StgBacktrace*);
 
 extern Tracepoint rootTracepoint;
 extern StgBacktrace rootBacktrace;

@@ -31,6 +31,21 @@ void fprintBacktrace(StgBacktrace *bt){
     return;
 }
 
+
+rtsBool isValidBacktrace(StgBacktrace *bt){
+    for(;;) {
+        if (bt == &rootBacktrace) {
+            return rtsTrue;
+        }
+        if (bt->header.info != &stg_Backtrace_info) {
+            return rtsFalse;
+        }
+        bt = bt->link;
+    }
+}
+
+//---------------------
+//---------------------
 Tracepoint rootTracepoint = {"Root","Root","Root"};
 
 #ifdef PROFILING

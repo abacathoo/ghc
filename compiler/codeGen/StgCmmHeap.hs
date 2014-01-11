@@ -118,6 +118,7 @@ allocDynClosureCmm mb_id info_tbl lf_info use_cc _blame_cc amodes_w_offsets
 
         -- SHOULD WE USE BACKTRACEHDR
         ; MASSERT(not $ isStackRep rep)
+        ; MASSERT(not $ isStaticRep rep)
         ; let useBacktraceHdr = isThunkRep rep || isFunRep rep
         -- ALLOCATE THE OBJECT
         ; base <- getHpRelOffset info_offset
