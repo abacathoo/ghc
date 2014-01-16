@@ -94,7 +94,6 @@ cgTopRhsCon dflags id con args =
                              dflags
                              info_tbl
                              dontCareCCS            -- Because it's static data
-                             False                  -- No backtrace
                              caffy                  -- Has CAF refs
                              payload
 

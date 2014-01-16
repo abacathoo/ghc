@@ -22,7 +22,7 @@ import StgCmmCon
 import StgCmmHeap
 import StgCmmProf (curCCS, ldvEnterClosure, enterCostCentreFun,
                    enterCostCentreThunk,initUpdFrameProf, costCentreFrom)
-import StgCmmBacktrace (enterBacktraceThunk, enterBacktraceFun)
+-- import StgCmmBacktrace (enterBacktraceThunk, enterBacktraceFun)
 import StgCmmTicky
 import StgCmmLayout
 import StgCmmUtils
@@ -93,7 +93,6 @@ cgTopRhsClosure dflags rec id ccs _ upd_flag args body =
          cg_info <- getCgIdInfo f
          let closure_rep   = mkStaticClosureFields dflags
                                     indStaticInfoTable ccs
-                                    False --no backtrace for indirection
                                     MayHaveCafRefs
                                     [unLit (idInfoToAmode cg_info)]
          emitDataLits closure_label closure_rep
@@ -109,9 +108,8 @@ cgTopRhsClosure dflags rec id ccs _ upd_flag args body =
 
               caffy         = idCafInfo id
               info_tbl      = mkCmmInfo closure_info -- XXX short-cut
-              useBacktraceHdr = isLFReEntrant lf_info
               closure_rep   = mkStaticClosureFields dflags info_tbl
-                              ccs useBacktraceHdr caffy []
+                              ccs caffy []
 
                  -- BUILD THE OBJECT, AND GENERATE INFO TABLE (IF NECESSARY)
         ; emitDataLits closure_label closure_rep

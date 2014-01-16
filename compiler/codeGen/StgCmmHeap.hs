@@ -166,14 +166,14 @@ mkStaticClosureFields
         :: DynFlags
         -> CmmInfoTable
         -> CostCentreStack
-        -> Bool -- Does the static closure have a backtrace feild in Hdr
         -> CafInfo
         -> [CmmLit]             -- Payload
         -> [CmmLit]             -- The full closure
-mkStaticClosureFields dflags info_tbl ccs useBacktraceHdr caf_refs payload
-  = mkStaticClosure dflags info_lbl ccs useBacktraceHdr payload padding
+mkStaticClosureFields dflags info_tbl ccs caf_refs payload
+  = mkStaticClosure dflags info_lbl ccs btHdr payload padding
         static_link_field saved_info_field
   where
+    btHdr = if is_backtrace then [rootBacktrace] else []
     info_lbl = cit_lbl info_tbl
 
     -- CAFs must have consistent layout, regardless of whether they
@@ -187,9 +187,12 @@ mkStaticClosureFields dflags info_tbl ccs useBacktraceHdr caf_refs payload
     -- the static_link and saved_info fields must always be in the
     -- same place.  So we use isThunkRep rather than closureUpdReqd
     -- here:
-
-    is_caf = isThunkRep (cit_rep info_tbl)
-
+    is_backtrace = ASSERT( is_static ) (isBacktraceRep rep) 
+    is_static = isStaticRep rep
+    is_caf = isThunkRep rep
+    rep = cit_rep info_tbl
+    rootBacktrace = CmmLabel $
+                    mkCmmDataLabel Module.rtsPackageId (fsLit "rootBacktrace")
     padding
         | is_caf && null payload = [mkIntCLit dflags 0]
         | otherwise = []
@@ -212,13 +215,14 @@ mkStaticClosureFields dflags info_tbl ccs useBacktraceHdr caf_refs payload
         | otherwise                = mkIntCLit dflags 1  -- No CAF refs
 
 
-mkStaticClosure :: DynFlags -> CLabel -> CostCentreStack ->
-                   Bool -> -- Use backtrace slot in header?
-                   [CmmLit] -> [CmmLit] -> [CmmLit] -> [CmmLit] -> [CmmLit]
-mkStaticClosure dflags info_lbl ccs _useBacktraceHdr payload padding
+mkStaticClosure :: DynFlags -> CLabel -> CostCentreStack
+                   ->  [CmmLit] -> [CmmLit] -> [CmmLit]
+                   ->  [CmmLit] -> [CmmLit] -> [CmmLit]
+mkStaticClosure dflags info_lbl ccs btHdr payload padding
                 static_link_field saved_info_field
   =  [CmmLabel info_lbl]
   ++ staticProfHdr dflags ccs
+  ++ btHdr
   ++ concatMap (padLitToWord dflags) payload
   ++ padding
   ++ static_link_field
