@@ -253,7 +253,9 @@ isBacktraceRep :: SMRep ->Bool
 isBacktraceRep (HeapRep _ _ _ Thunk{}) = True
 isBacktraceRep (HeapRep _ _ _ ThunkSelector{}) = True
 isBacktraceRep (HeapRep _ _ _ Fun{}) = True
-isBacktraceRep _ = error "SMRep.isBacktraceRep"
+isBacktraceRep (HeapRep _ _ _ IndStatic{}) = error "SMRep.isBacktraceRep.i"
+isBacktraceRep (HeapRep _ _ _ BlackHole{}) = error "SMRep.isBacktraceRep.b"
+isBacktraceRep _ = False
 
 isFunRep :: SMRep -> Bool
 isFunRep (HeapRep _ _ _ Fun{}) = True
