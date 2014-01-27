@@ -275,6 +275,9 @@ checkClosure( StgClosure* p )
     case THUNK_STATIC:
     case FUN_STATIC:
 
+    case IND_PERM:
+    case BLACKHOLE:
+
       {
         ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
       }
@@ -285,8 +288,6 @@ checkClosure( StgClosure* p )
     case CONSTR_1_1:
     case CONSTR_0_2:
     case CONSTR_2_0:
-    case IND_PERM:
-    case BLACKHOLE:
     case PRIM:
     case MUT_PRIM:
     case MUT_VAR_CLEAN:
@@ -358,6 +359,7 @@ checkClosure( StgClosure* p )
   	    /* we don't expect to see any of these after GC
 	     * but they might appear during execution
 	     */
+            ASSERT(HAS_VALID_BACKTRACE_HEADER(p));
 	    StgInd *ind = (StgInd *)p;
 	    ASSERT(LOOKS_LIKE_CLOSURE_PTR(ind->indirectee));
 	    return sizeofW(StgInd);

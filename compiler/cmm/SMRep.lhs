@@ -249,17 +249,12 @@ isThunkRep (HeapRep _ _ _ BlackHole{})     = True
 isThunkRep (HeapRep _ _ _ IndStatic{})     = True
 isThunkRep _                               = False
 
-isBacktraceRep :: SMRep ->Bool
-isBacktraceRep (HeapRep _ _ _ Thunk{}) = True
-isBacktraceRep (HeapRep _ _ _ ThunkSelector{}) = True
-isBacktraceRep (HeapRep _ _ _ Fun{}) = True
-isBacktraceRep (HeapRep _ _ _ IndStatic{}) = error "SMRep.isBacktraceRep.i"
-isBacktraceRep (HeapRep _ _ _ BlackHole{}) = error "SMRep.isBacktraceRep.b"
-isBacktraceRep _ = False
-
 isFunRep :: SMRep -> Bool
 isFunRep (HeapRep _ _ _ Fun{}) = True
 isFunRep _                     = False
+
+isBacktraceRep :: SMRep ->Bool
+isBacktraceRep rep = isFunRep rep || isThunkRep rep
 
 isStaticNoCafCon :: SMRep -> Bool
 -- This should line up exactly with CONSTR_NOCAF_STATIC above

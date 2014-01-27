@@ -105,7 +105,7 @@ typedef struct {
 } StgPAP;
 
 typedef struct {
-    StgBacktraceHeader   backtrace_header;
+    StgThunkHeader   backtrace_header;
     StgHalfWord arity;		/* zero if it is an AP */
     StgHalfWord n_args;
     StgClosure *fun;		/* really points to a fun */
@@ -120,12 +120,12 @@ typedef struct {
 } StgAP_STACK;
 
 typedef struct {
-    StgHeader   header;
+    StgBacktraceHeader   header;
     StgClosure *indirectee;
 } StgInd;
 
 typedef struct {
-    StgHeader     header;
+    StgBacktraceHeader     header;
     StgClosure   *indirectee;
     StgClosure   *static_link;
     const StgInfoTable *saved_info;
