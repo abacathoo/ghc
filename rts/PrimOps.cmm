@@ -466,7 +466,8 @@ stg_casMutVarzh ( gcptr mv, gcptr old, gcptr new )
 {
     gcptr h;
 
-    (h) = ccall cas(mv + SIZEOF_StgHeader + OFFSET_StgMutVar_var, old, new);
+    (h) = ccall cas(mv + OFFSET_StgMutVar_var, old, new);
+
     if (h != old) {
         return (1,h);
     } else {
@@ -542,7 +543,7 @@ stg_atomicModifyMutVarzh ( gcptr mv, gcptr f )
     x = StgMutVar_var(mv);
     StgThunk_payload(z,1) = x;
 #ifdef THREADED_RTS
-    (h) = ccall cas(mv + SIZEOF_StgHeader + OFFSET_StgMutVar_var, x, y);
+    (h) = ccall cas(mv + OFFSET_StgMutVar_var, x, y);
     if (h != x) { goto retry; }
 #else
     StgMutVar_var(mv) = y;

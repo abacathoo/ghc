@@ -1329,16 +1329,6 @@ forkLabelledCode p = do
 -- -----------------------------------------------------------------------------
 -- Putting it all together
 
--- The initial environment: we define some constants that the compiler
--- knows about here.
-initEnv :: DynFlags -> Env
-initEnv dflags = listToUFM [
-  ( fsLit "SIZEOF_StgHeader",
-    VarN (CmmLit (CmmInt (fromIntegral (fixedHdrSize dflags)) (wordWidth dflags)) )),
-  ( fsLit "SIZEOF_StgInfoTable",
-    VarN (CmmLit (CmmInt (fromIntegral (stdInfoTableSizeB dflags)) (wordWidth dflags)) ))
-  ]
-
 parseCmmFile :: DynFlags -> FilePath -> IO (Messages, Maybe CmmGroup)
 parseCmmFile dflags filename = do
   showPass dflags "ParseCmm"
@@ -1354,7 +1344,7 @@ parseCmmFile dflags filename = do
         return ((emptyBag, unitBag msg), Nothing)
     POk pst code -> do
         st <- initC
-        let (cmm,_) = runC dflags no_module st (getCmm (unEC code (initEnv dflags) [] >> return ()))
+        let (cmm,_) = runC dflags no_module st (getCmm (unEC code emptyUFM [] >> return ()))
         let ms = getMessages pst
         if (errorsFound dflags ms)
          then return (ms, Nothing)

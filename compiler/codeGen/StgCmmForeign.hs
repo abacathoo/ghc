@@ -34,7 +34,6 @@ import MkGraph
 import Type
 import TysPrim
 import CLabel
-import SMRep
 import ForeignCall
 import DynFlags
 import Maybes
@@ -284,11 +283,11 @@ saveThreadState dflags tso cn =
     -- tso = CurrentTSO;
     mkAssign (CmmLocal tso) stgCurrentTSO,
     -- tso->stackobj->sp = Sp;
-    mkStore (cmmOffset dflags (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso)) (tso_stackobj dflags)) (bWord dflags)) (stack_SP dflags)) stgSp,
+    mkStore (cmmOffset dflags (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso)) (oFFSET_StgTSO_stackobj dflags)) (bWord dflags)) (oFFSET_StgStack_sp dflags)) stgSp,
     closeNursery dflags tso cn,
     -- and save the current cost centre stack in the TSO when profiling:
     if gopt Opt_SccProfilingOn dflags then
-        mkStore (cmmOffset dflags (CmmReg (CmmLocal tso)) (tso_CCCS dflags)) curCCS
+        mkStore (cmmOffset dflags (CmmReg (CmmLocal tso)) (oFFSET_StgTSO_cccs dflags)) curCCS
       else mkNop
     ]
 
@@ -331,7 +330,7 @@ closeNursery df tso cn =
               , CmmLoad (nursery_bdescr_start df cnreg) (bWord df)
               ]
 
-        alloc_limit = cmmOffset df (CmmReg tsoreg) (tso_alloc_limit df)
+        alloc_limit = cmmOffset df (CmmReg tsoreg) (oFFSET_StgTSO_alloc_limit df)
     in
 
     -- tso->alloc_limit += alloc
@@ -364,11 +363,11 @@ loadThreadState dflags tso stack cn bdfree bdstart =
     -- tso = CurrentTSO;
     mkAssign (CmmLocal tso) stgCurrentTSO,
     -- stack = tso->stackobj;
-    mkAssign (CmmLocal stack) (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso)) (tso_stackobj dflags)) (bWord dflags)),
+    mkAssign (CmmLocal stack) (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso)) (oFFSET_StgTSO_stackobj dflags)) (bWord dflags)),
     -- Sp = stack->sp;
-    mkAssign sp (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal stack)) (stack_SP dflags)) (bWord dflags)),
+    mkAssign sp (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal stack)) (oFFSET_StgStack_sp dflags)) (bWord dflags)),
     -- SpLim = stack->stack + RESERVED_STACK_WORDS;
-    mkAssign spLim (cmmOffsetW dflags (cmmOffset dflags (CmmReg (CmmLocal stack)) (stack_STACK dflags))
+    mkAssign spLim (cmmOffsetW dflags (cmmOffset dflags (CmmReg (CmmLocal stack)) (oFFSET_StgStack_stack dflags))
                                 (rESERVED_STACK_WORDS dflags)),
     -- HpAlloc = 0;
     --   HpAlloc is assumed to be set to non-zero only by a failed
@@ -379,7 +378,7 @@ loadThreadState dflags tso stack cn bdfree bdstart =
     if gopt Opt_SccProfilingOn dflags
        then storeCurCCS
               (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso))
-                 (tso_CCCS dflags)) (ccsType dflags))
+                 (oFFSET_StgTSO_cccs dflags)) (ccsType dflags))
        else mkNop
    ]
 
@@ -437,7 +436,7 @@ openNursery df tso cn bdfree bdstart =
      let alloc =
            CmmMachOp (mo_wordSub df) [CmmReg bdfreereg, CmmReg bdstartreg]
 
-         alloc_limit = cmmOffset df (CmmReg tsoreg) (tso_alloc_limit df)
+         alloc_limit = cmmOffset df (CmmReg tsoreg) (oFFSET_StgTSO_alloc_limit df)
      in
 
      -- tso->alloc_limit += alloc
@@ -472,17 +471,6 @@ nursery_bdescr_start  dflags cn =
   cmmOffset dflags (CmmReg cn) (oFFSET_bdescr_start dflags)
 nursery_bdescr_blocks dflags cn =
   cmmOffset dflags (CmmReg cn) (oFFSET_bdescr_blocks dflags)
-
-tso_stackobj, tso_CCCS, tso_alloc_limit, stack_STACK, stack_SP :: DynFlags -> ByteOff
-tso_stackobj dflags = closureField dflags (oFFSET_StgTSO_stackobj dflags)
-tso_alloc_limit dflags = closureField dflags (oFFSET_StgTSO_alloc_limit dflags)
-tso_CCCS     dflags = closureField dflags (oFFSET_StgTSO_cccs dflags)
-stack_STACK  dflags = closureField dflags (oFFSET_StgStack_stack dflags)
-stack_SP     dflags = closureField dflags (oFFSET_StgStack_sp dflags)
-
-
-closureField :: DynFlags -> ByteOff -> ByteOff
-closureField dflags off = off + fixedHdrSize dflags
 
 stgSp, stgHp, stgCurrentTSO, stgCurrentNursery :: CmmExpr
 stgSp             = CmmReg sp
@@ -527,13 +515,13 @@ getFCallArgs args
 add_shim :: DynFlags -> Type -> CmmExpr -> CmmExpr
 add_shim dflags arg_ty expr
   | tycon == arrayPrimTyCon || tycon == mutableArrayPrimTyCon
-  = cmmOffsetB dflags expr (arrPtrsHdrSize dflags)
+  = cmmOffsetB dflags expr (sIZEOF_StgMutArrPtrs dflags)
 
   | tycon == smallArrayPrimTyCon || tycon == smallMutableArrayPrimTyCon
-  = cmmOffsetB dflags expr (smallArrPtrsHdrSize dflags)
+  = cmmOffsetB dflags expr (sIZEOF_StgSmallMutArrPtrs dflags)
 
   | tycon == byteArrayPrimTyCon || tycon == mutableByteArrayPrimTyCon
-  = cmmOffsetB dflags expr (arrWordsHdrSize dflags)
+  = cmmOffsetB dflags expr (sIZEOF_StgArrWords dflags)
 
   | otherwise = expr
   where

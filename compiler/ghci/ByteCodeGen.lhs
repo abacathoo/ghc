@@ -930,17 +930,17 @@ generateCCall d0 s p (CCallSpec target cconv safety) fn args_r_to_l
                     Just t
                      | t == arrayPrimTyCon || t == mutableArrayPrimTyCon
                        -> do rest <- pargs (d + fromIntegral addr_sizeW) az
-                             code <- parg_ArrayishRep (fromIntegral (arrPtrsHdrSize dflags)) d p a
+                             code <- parg_ArrayishRep (fromIntegral (sIZEOF_StgMutArrPtrs dflags)) d p a
                              return ((code,AddrRep):rest)
 
                      | t == smallArrayPrimTyCon || t == smallMutableArrayPrimTyCon
                        -> do rest <- pargs (d + fromIntegral addr_sizeW) az
-                             code <- parg_ArrayishRep (fromIntegral (smallArrPtrsHdrSize dflags)) d p a
+                             code <- parg_ArrayishRep (fromIntegral (sIZEOF_StgSmallMutArrPtrs dflags)) d p a
                              return ((code,AddrRep):rest)
 
                      | t == byteArrayPrimTyCon || t == mutableByteArrayPrimTyCon
                        -> do rest <- pargs (d + fromIntegral addr_sizeW) az
-                             code <- parg_ArrayishRep (fromIntegral (arrWordsHdrSize dflags)) d p a
+                             code <- parg_ArrayishRep (fromIntegral (sIZEOF_StgArrWords dflags)) d p a
                              return ((code,AddrRep):rest)
 
                     -- Default case: push taggedly, but otherwise intact.

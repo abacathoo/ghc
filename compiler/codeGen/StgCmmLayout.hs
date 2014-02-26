@@ -403,9 +403,8 @@ mkVirtHeapOffsets dflags is_thunk things
     , ptrs_w_offsets ++ non_ptrs_w_offsets
     )
   where
-    hdr_words | is_thunk   = thunkHdrSize dflags
-              | otherwise  = fixedHdrSizeW dflags
-    hdr_bytes = wordsToBytes dflags hdr_words
+    hdr_bytes | is_thunk   = sIZEOF_StgThunkHeader dflags
+              | otherwise  = sIZEOF_StgHeader dflags
 
     non_void_things    = filterOut (isVoidRep . fst)  things
     (ptrs, non_ptrs)   = partition (isGcPtrRep . fst) non_void_things
