@@ -158,12 +158,12 @@ profAlloc :: CmmExpr -> CmmExpr -> FCode ()
 profAlloc words ccs
   = ifProfiling $
         do dflags <- getDynFlags
-           let alloc_rep = rEP_CostCentreStack_mem_alloc dflags
+           let alloc_rep = cmmBits $ widthFromBytes $ rEP_CostCentreStack_mem_alloc dflags
            emit (addToMemE alloc_rep
                        (cmmOffsetB dflags ccs (oFFSET_CostCentreStack_mem_alloc dflags))
                        (CmmMachOp (MO_UU_Conv (wordWidth dflags) (typeWidth alloc_rep)) $
                          [CmmMachOp (mo_wordSub dflags) [words,
-                                                         mkIntExpr dflags (profHdrSize dflags)]]))
+                                                         mkIntExpr dflags (sIZEOFW_StgProfHeader dflags)]]))
                        -- subtract the "profiling overhead", which is the
                        -- profiling header in a closure.
 
@@ -290,7 +290,7 @@ pushCostCentre result ccs cc
 
 bumpSccCount :: DynFlags -> CmmExpr -> CmmAGraph
 bumpSccCount dflags ccs
-  = addToMem (rEP_CostCentreStack_scc_count dflags)
+  = addToMem (cmmBits $ widthFromBytes $ rEP_CostCentreStack_scc_count dflags)
          (cmmOffsetB dflags ccs (oFFSET_CostCentreStack_scc_count dflags)) 1
 
 -----------------------------------------------------------------------------

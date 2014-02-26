@@ -90,7 +90,7 @@ stg_PAP_apply /* no args => explicit stack */
   // Reload the stack 
   W_ i;
   W_ p;
-  p = pap + SIZEOF_StgHeader + OFFSET_StgPAP_payload;
+  p = pap + OFFSET_StgPAP_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -180,7 +180,7 @@ INFO_TABLE(stg_AP,/*special layout*/0,0,AP,"AP","AP")
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_payload;
+  p = ap + OFFSET_StgAP_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -249,7 +249,7 @@ INFO_TABLE(stg_AP_NOUPD,/*special layout*/0,0,AP,"AP_NOUPD","AP_NOUPD")
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_payload;
+  p = ap + OFFSET_StgAP_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -329,7 +329,7 @@ INFO_TABLE(stg_AP_STACK,/*special layout*/0,0,AP_STACK,"AP_STACK","AP_STACK")
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_STACK_payload;
+  p = ap + OFFSET_StgAP_STACK_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -381,7 +381,7 @@ INFO_TABLE(stg_AP_STACK_NOUPD,/*special layout*/0,0,AP_STACK,
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_STACK_payload;
+  p = ap + OFFSET_StgAP_STACK_payload;
   i = 0;
 for:
   if (i < Words) {

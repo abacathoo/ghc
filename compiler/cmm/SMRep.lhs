@@ -34,10 +34,8 @@ module SMRep (
 
         -- ** Size-related things
         heapClosureSizeW,
-        fixedHdrSizeW, arrWordsHdrSize, arrWordsHdrSizeW, arrPtrsHdrSize,
-        arrPtrsHdrSizeW, profHdrSize, thunkHdrSize, nonHdrSize, nonHdrSizeW,
-        smallArrPtrsHdrSize, smallArrPtrsHdrSizeW, hdrSize, hdrSizeW,
-        fixedHdrSize,
+        nonHdrSize, nonHdrSizeW,
+        hdrSize, hdrSizeW,
 
         -- ** RTS closure types
         rtsClosureType, rET_SMALL, rET_BIG,
@@ -230,9 +228,9 @@ mkHeapRep dflags is_static ptr_wds nonptr_wds cl_type_info
   where
      slop_wds
       | is_static = 0
-      | otherwise = max 0 (minClosureSize dflags - (hdr_size + payload_size))
+      | otherwise = max 0 (minClosureSizeW dflags - (hdr_size + payload_size))
 
-     hdr_size     = closureTypeHdrSize dflags cl_type_info
+     hdr_size     = closureTypeHdrSizeW dflags cl_type_info
      payload_size = ptr_wds + nonptr_wds
 
 mkRTSRep :: Int -> SMRep -> SMRep
@@ -290,71 +288,27 @@ isStaticNoCafCon :: SMRep -> Bool
 isStaticNoCafCon (HeapRep True 0 _ Constr{}) = True
 isStaticNoCafCon _                           = False
 
-
 -----------------------------------------------------------------------------
 -- Size-related things
 
-fixedHdrSize :: DynFlags -> ByteOff
-fixedHdrSize dflags = wordsToBytes dflags (fixedHdrSizeW dflags)
-
--- | Size of a closure header (StgHeader in includes/rts/storage/Closures.h)
-fixedHdrSizeW :: DynFlags -> WordOff
-fixedHdrSizeW dflags = sTD_HDR_SIZE dflags + profHdrSize dflags
-
--- | Size of the profiling part of a closure header
--- (StgProfHeader in includes/rts/storage/Closures.h)
-profHdrSize  :: DynFlags -> WordOff
-profHdrSize dflags
- | gopt Opt_SccProfilingOn dflags = pROF_HDR_SIZE dflags
- | otherwise                      = 0
-
 -- | The garbage collector requires that every closure is at least as
 --   big as this.
-minClosureSize :: DynFlags -> WordOff
-minClosureSize dflags = fixedHdrSizeW dflags + mIN_PAYLOAD_SIZE dflags
+minClosureSizeW :: DynFlags -> WordOff
+minClosureSizeW dflags = sIZEOFW_StgClosure dflags + mIN_PAYLOAD_SIZE dflags
 
-arrWordsHdrSize :: DynFlags -> ByteOff
-arrWordsHdrSize dflags
- = fixedHdrSize dflags + sIZEOF_StgArrWords_NoHdr dflags
-
-arrWordsHdrSizeW :: DynFlags -> WordOff
-arrWordsHdrSizeW dflags =
-    fixedHdrSizeW dflags +
-    (sIZEOF_StgArrWords_NoHdr dflags `quot` wORD_SIZE dflags)
-
-arrPtrsHdrSize :: DynFlags -> ByteOff
-arrPtrsHdrSize dflags
- = fixedHdrSize dflags + sIZEOF_StgMutArrPtrs_NoHdr dflags
-
-arrPtrsHdrSizeW :: DynFlags -> WordOff
-arrPtrsHdrSizeW dflags =
-    fixedHdrSizeW dflags +
-    (sIZEOF_StgMutArrPtrs_NoHdr dflags `quot` wORD_SIZE dflags)
-
-smallArrPtrsHdrSize :: DynFlags -> ByteOff
-smallArrPtrsHdrSize dflags
- = fixedHdrSize dflags + sIZEOF_StgSmallMutArrPtrs_NoHdr dflags
-
-smallArrPtrsHdrSizeW :: DynFlags -> WordOff
-smallArrPtrsHdrSizeW dflags =
-    fixedHdrSizeW dflags +
-    (sIZEOF_StgSmallMutArrPtrs_NoHdr dflags `quot` wORD_SIZE dflags)
-
--- Thunks have an extra header word on SMP, so the update doesn't
--- splat the payload.
-thunkHdrSize :: DynFlags -> WordOff
-thunkHdrSize dflags = fixedHdrSizeW dflags + smp_hdr
-        where smp_hdr = sIZEOF_StgSMPThunkHeader dflags `quot` wORD_SIZE dflags
+-- | The total size of the closure, in words.
+heapClosureSizeW :: DynFlags -> SMRep -> WordOff
+heapClosureSizeW dflags rep = nonHdrSizeW rep + hdrSizeW dflags rep
 
 hdrSize :: DynFlags -> SMRep -> ByteOff
 hdrSize dflags rep = wordsToBytes dflags (hdrSizeW dflags rep)
 
 hdrSizeW :: DynFlags -> SMRep -> WordOff
-hdrSizeW dflags (HeapRep _ _ _ ty)    = closureTypeHdrSize dflags ty
-hdrSizeW dflags (ArrayPtrsRep _ _)    = arrPtrsHdrSizeW dflags
-hdrSizeW dflags (SmallArrayPtrsRep _) = smallArrPtrsHdrSizeW dflags
-hdrSizeW dflags (ArrayWordsRep _)     = arrWordsHdrSizeW dflags
-hdrSizeW _ _                          = panic "SMRep.hdrSizeW"
+hdrSizeW dflags (HeapRep _ _ _ ty) = closureTypeHdrSizeW dflags ty
+hdrSizeW dflags (ArrayPtrsRep _ _) = sIZEOFW_StgMutArrPtrs dflags
+hdrSizeW dflags (SmallArrayPtrsRep _) = sIZEOFW_StgSmallMutArrPtrs dflags
+hdrSizeW dflags (ArrayWordsRep _) = sIZEOFW_StgArrWords dflags
+hdrSizeW _ _ = panic "SMRep.hdrSizeW"
 
 nonHdrSize :: DynFlags -> SMRep -> ByteOff
 nonHdrSize dflags rep = wordsToBytes dflags (nonHdrSizeW rep)
@@ -367,26 +321,14 @@ nonHdrSizeW (ArrayWordsRep words) = words
 nonHdrSizeW (StackRep bs)      = length bs
 nonHdrSizeW (RTSRep _ rep)     = nonHdrSizeW rep
 
--- | The total size of the closure, in words.
-heapClosureSizeW :: DynFlags -> SMRep -> WordOff
-heapClosureSizeW dflags (HeapRep _ p np ty)
- = closureTypeHdrSize dflags ty + p + np
-heapClosureSizeW dflags (ArrayPtrsRep elems ct)
- = arrPtrsHdrSizeW dflags + elems + ct
-heapClosureSizeW dflags (SmallArrayPtrsRep elems)
- = smallArrPtrsHdrSizeW dflags + elems
-heapClosureSizeW dflags (ArrayWordsRep words)
- = arrWordsHdrSizeW dflags + words
-heapClosureSizeW _ _ = panic "SMRep.heapClosureSize"
-
-closureTypeHdrSize :: DynFlags -> ClosureTypeInfo -> WordOff
-closureTypeHdrSize dflags ty = case ty of
-                  Thunk{}         -> thunkHdrSize dflags
-                  ThunkSelector{} -> thunkHdrSize dflags
-                  BlackHole{}     -> thunkHdrSize dflags
-                  IndStatic{}     -> thunkHdrSize dflags
-                  _               -> fixedHdrSizeW dflags
-        -- All thunks use thunkHdrSize, even if they are non-updatable.
+closureTypeHdrSizeW :: DynFlags -> ClosureTypeInfo -> WordOff
+closureTypeHdrSizeW dflags ty = case ty of
+                  Thunk{}         -> sIZEOFW_StgThunkHeader dflags
+                  ThunkSelector{} -> sIZEOFW_StgThunkHeader dflags
+                  BlackHole{}     -> sIZEOFW_StgThunkHeader dflags
+                  IndStatic{}     -> sIZEOFW_StgThunkHeader dflags
+                  _               -> sIZEOFW_StgHeader dflags
+        -- All thunks use sIZEOFW_StgThunkHeader, even if they are non-updatable.
         -- this is because we don't have separate closure types for
         -- updatable vs. non-updatable thunks, so the GC can't tell the
         -- difference.  If we ever have significant numbers of non-
