@@ -624,7 +624,7 @@ stg_block_throwto_finally
     // unlock the throwto message, but only if it wasn't already
     // unlocked.  It may have been unlocked if we revoked the message
     // due to an exception being raised during threadPaused().
-    if (StgHeader_info(StgTSO_block_info(CurrentTSO)) == stg_WHITEHOLE_info) {
+    if (StgClosure_info(StgTSO_block_info(CurrentTSO)) == stg_WHITEHOLE_info) {
         W_ r1;
         r1 = R1;
         unlockClosure(StgTSO_block_info(CurrentTSO), stg_MSG_THROWTO_info);

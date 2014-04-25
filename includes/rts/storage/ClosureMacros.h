@@ -94,7 +94,7 @@ INLINE_HEADER StgThunkInfoTable *get_thunk_itbl(const StgClosure *c) {return THU
 INLINE_HEADER StgConInfoTable *get_con_itbl(const StgClosure *c) {return CON_INFO_PTR_TO_STRUCT((c)->header.info);}
 
 INLINE_HEADER StgHalfWord GET_TAG(const StgClosure *con) {
-    return get_itbl(con)->srt_bitmap;
+    return get_itbl(con)->u.constr_tag;
 }
 
 /* -----------------------------------------------------------------------------

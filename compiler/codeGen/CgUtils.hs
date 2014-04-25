@@ -80,9 +80,9 @@ baseRegOffset dflags CCCS                = oFFSET_StgRegTable_rCCCS dflags
 baseRegOffset dflags CurrentTSO          = oFFSET_StgRegTable_rCurrentTSO dflags
 baseRegOffset dflags CurrentNursery      = oFFSET_StgRegTable_rCurrentNursery dflags
 baseRegOffset dflags HpAlloc             = oFFSET_StgRegTable_rHpAlloc dflags
-baseRegOffset dflags EagerBlackholeInfo  = oFFSET_stgEagerBlackholeInfo dflags
-baseRegOffset dflags GCEnter1            = oFFSET_stgGCEnter1 dflags
-baseRegOffset dflags GCFun               = oFFSET_stgGCFun dflags
+baseRegOffset df EagerBlackholeInfo  = oFFSET_Capability_stgEagerBlackholeInfo df
+baseRegOffset dflags GCEnter1        = oFFSET_Capability_stgGCEnter1 dflags
+baseRegOffset dflags GCFun           = oFFSET_Capability_stgGCFun dflags
 baseRegOffset _      BaseReg             = panic "baseRegOffset:BaseReg"
 baseRegOffset _      PicBaseReg          = panic "baseRegOffset:PicBaseReg"
 

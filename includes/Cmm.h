@@ -529,10 +529,6 @@
 /* The number of words allocated in an array payload */
 #define BYTE_ARR_WDS(arr) ROUNDUP_BYTES_TO_WDS(StgArrWords_bytes(arr))
 
-/* Getting/setting the info pointer of a closure */
-#define SET_INFO(p,info) StgHeader_info(p) = info
-#define GET_INFO(p) StgHeader_info(p)
-
 /* Determine the size of an ordinary closure from its info table */
 #define sizeW_fromITBL(itbl) \
   SIZEOF_StgHeader + WDS(%INFO_PTRS(itbl)) + WDS(%INFO_NPTRS(itbl))
@@ -550,7 +546,7 @@
    ( (TO_W_(%INFO_TYPE(%STD_INFO(p))) != INVALID_OBJECT) &&     \
      (TO_W_(%INFO_TYPE(%STD_INFO(p))) <  N_CLOSURE_TYPES))
 
-#define LOOKS_LIKE_CLOSURE_PTR(p) (LOOKS_LIKE_INFO_PTR(GET_INFO(UNTAG(p))))
+#define LOOKS_LIKE_CLOSURE_PTR(p) (LOOKS_LIKE_INFO_PTR(StgClosure_info(UNTAG(p))))
 
 /*
  * The layout of the StgFunInfoExtra part of an info table changes

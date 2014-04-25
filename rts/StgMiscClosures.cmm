@@ -282,7 +282,7 @@ INFO_TABLE(stg_IND_PERM,1,0,IND_PERM,"IND_PERM","IND_PERM")
 #  ifdef PROFILING
 #    error Profiling and ticky-ticky do not mix at present!
 #  endif  /* PROFILING */
-    StgHeader_info(R1) = stg_IND_info;
+    StgClosure_info(R1) = stg_IND_info;
 #endif /* TICKY_TICKY */
 
     R1 = UNTAG(StgInd_indirectee(R1));
@@ -317,7 +317,7 @@ retry:
         return (p);
     }
 
-    info = StgHeader_info(p);
+    info = StgClosure_info(p);
     if (info == stg_IND_info) {
         // This could happen, if e.g. we got a BLOCKING_QUEUE that has
         // just been replaced with an IND by another thread in
@@ -391,7 +391,7 @@ INFO_TABLE(stg_WHITEHOLE, 0,0, WHITEHOLE, "WHITEHOLE", "WHITEHOLE")
     i = 0;
 loop:
     // spin until the WHITEHOLE is updated
-    info = StgHeader_info(node);
+    info = StgClosure_info(node);
     if (info == stg_WHITEHOLE_info) {
         i = i + 1;
         if (i == SPIN_COUNT) {

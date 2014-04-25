@@ -13,7 +13,8 @@
 utils/deriveConstants_dist_MODULES = DeriveConstants
 utils/deriveConstants_dist_PROGNAME = deriveConstants
 utils/deriveConstants_dist_INSTALL_INPLACE = YES
-utils/deriveConstants_HC_OPTS += -package process -package containers
+utils/deriveConstants_HC_OPTS += -package process -package containers \
+ -cpp $(foreach opt,$(addprefix -I,$(GHC_INCLUDE_DIRS)),-optP$(opt))
 
 $(eval $(call build-prog,utils/deriveConstants,dist,0))
 

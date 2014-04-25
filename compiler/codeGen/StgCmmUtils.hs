@@ -28,7 +28,7 @@ module StgCmmUtils (
         cmmLabelOffW, cmmLabelOffB,
         cmmOffsetW, cmmOffsetB,
         cmmOffsetLitW, cmmOffsetLitB,
-        cmmLoadIndexW,
+        cmmLoadOffsetW,
         cmmConstrTag1,
 
         cmmUntag, cmmIsTagged,
@@ -36,7 +36,9 @@ module StgCmmUtils (
         addToMem, addToMemE, addToMemLblE, addToMemLbl,
         mkWordCLit,
         newStringCLit, newByteStringCLit,
-        blankWord
+        blankWord,
+
+#include "../includes/dist-derivedconstants/header/GHCConstantsHaskellCodeGenExports.hs"
   ) where
 
 #include "HsVersions.h"
@@ -72,7 +74,7 @@ import Data.Ord
 import Data.Word
 import Data.Maybe
 
-
+#include "../includes/dist-derivedconstants/header/GHCConstantsHaskellCodeGenWrappers.hs"
 -------------------------------------------------------------------------
 --
 --      Literals
@@ -300,8 +302,8 @@ baseRegOffset dflags CCCS           = oFFSET_StgRegTable_rCCCS dflags
 baseRegOffset dflags CurrentTSO     = oFFSET_StgRegTable_rCurrentTSO dflags
 baseRegOffset dflags CurrentNursery = oFFSET_StgRegTable_rCurrentNursery dflags
 baseRegOffset dflags HpAlloc        = oFFSET_StgRegTable_rHpAlloc dflags
-baseRegOffset dflags GCEnter1       = oFFSET_stgGCEnter1 dflags
-baseRegOffset dflags GCFun          = oFFSET_stgGCFun dflags
+baseRegOffset dflags GCEnter1       = oFFSET_Capability_stgGCEnter1 dflags
+baseRegOffset dflags GCFun          = oFFSET_Capability_stgGCFun dflags
 baseRegOffset _      reg            = pprPanic "baseRegOffset:" (ppr reg)
 
 -------------------------------------------------------------------------

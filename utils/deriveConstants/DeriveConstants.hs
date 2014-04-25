@@ -1,3 +1,4 @@
+#include "ghcautoconf.h"
 
 {- ------------------------------------------------------------------------
 
@@ -33,9 +34,9 @@ wanteds_i = concat
   -- blocks that fit in an MBlock, leaving space for the block descriptors
   ,[mkWord both  "BLOCKS_PER_MBLOCK" "BLOCKS_PER_MBLOCK"]
 
-  ,intOffset both "stgEagerBlackholeInfo" "FUN_OFFSET(stgEagerBlackholeInfo)"
-  ,intOffset both "stgGCEnter1"           "FUN_OFFSET(stgGCEnter1)"
-  ,intOffset both "stgGCFun"              "FUN_OFFSET(stgGCFun)"
+  ,offset [bro "r"] "Capability" "f.stgEagerBlackholeInfo"
+  ,offset [bro "r"] "Capability" "f.stgGCEnter1"
+  ,offset [bro "r"] "Capability" "f.stgGCFun"
 
   ,offset [bo] "StgRegTable" "rR1"
   ,offset [bo] "StgRegTable" "rR2"
@@ -97,9 +98,9 @@ wanteds_i = concat
   ,offset [co,cr,cm] "Capability"  "interrupt"
   ,offset [co,cr,cm] "Capability"  "sparks"
 
-  ,offset [bo,cr,cm] "bdescr"      "start"
-  ,offset [bo,cr,cm] "bdescr"      "free"
-  ,offset [bo,cr,cm] "bdescr"      "blocks"
+  ,offset [bo,br,bm] "bdescr"      "start"
+  ,offset [bo,br,bm] "bdescr"      "free"
+  ,offset [bo,br,bm] "bdescr"      "blocks"
   ,offset [co,cr,cm] "bdescr"      "gen_no"
   ,offset [co,cr,cm] "bdescr"      "link"
 
@@ -238,10 +239,9 @@ wanteds_p = concat
   ,size   both       "StgHeader"
   ,sizeW  [Haskell]  "StgThunkHeader"
   ,size   both       "StgThunkHeader"
-  ,offset [co,cr,cm] "StgHeader"          "info"
 
   ,sizeW  [Haskell]  "StgClosure"
-  ,offset [bo,br,cm] "StgClosure"         "header.info"
+  ,offset [bo,br,bm] "StgClosure"         "header.info"
 
   ,offset [co,cmp]   "StgClosure"         "payload"
   ,offset [co,cmp]   "StgThunk"           "payload"
@@ -252,12 +252,12 @@ wanteds_p = concat
 
   ,sizeW  [Haskell]  "StgSmallMutArrPtrs"
   ,size   both       "StgSmallMutArrPtrs"
-  ,offset [bo,br,cm] "StgSmallMutArrPtrs" "ptrs"
+  ,offset [bo,br,bm] "StgSmallMutArrPtrs" "ptrs"
 
   ,sizeW  [Haskell]  "StgMutArrPtrs"
   ,size   both       "StgMutArrPtrs"
-  ,offset [bo,cr,cm] "StgMutArrPtrs" "ptrs"
-  ,offset [bo,cr,cm] "StgMutArrPtrs" "size"
+  ,offset [bo,br,bm] "StgMutArrPtrs" "ptrs"
+  ,offset [bo,br,bm] "StgMutArrPtrs" "size"
 
   ,sizeW  [Haskell]  "StgArrWords"
   ,size   both       "StgArrWords"
@@ -277,16 +277,16 @@ wanteds_p = concat
   ,offset  [co,cr,cm] "StgTSO" "flags"
   ,offset  [co,cr,cm] "StgTSO" "dirty"
   ,offset  [co,cr,cm] "StgTSO" "bq"
-  ,offset  [bo,cr,cm] "StgTSO" "alloc_limit"
+  ,offset  [bo,br,bm] "StgTSO" "alloc_limit"
   --For               "StgTSO" "cccs" see [PROFILING only]
-  ,offset  [bo,cr,cm] "StgTSO" "stackobj"
+  ,offset  [bo,br,bm] "StgTSO" "stackobj"
 
-  ,offset [bo,cr,cm] "StgStack"    "sp"
+  ,offset [bo,br,bm] "StgStack"    "sp"
   ,offset [bo]       "StgStack"    "stack"
   ,offset [co,cr,cm] "StgStack"    "stack_size"
   ,offset [co,cr,cm] "StgStack"    "dirty"
 
-  ,offset [bo,cr,cm] "StgUpdateFrame" "updatee"
+  ,offset [bo,br,bm] "StgUpdateFrame" "updatee"
   ,offset [co,cr,cm] "StgCatchFrame"  "handler"
   ,offset [co,cr,cm] "StgCatchFrame"  "exceptions_blocked"
 
@@ -363,7 +363,6 @@ wanteds_p = concat
   ,offset [co,cr,cm] "StgMVar" "tail"
   ,offset [co,cr,cm] "StgMVar" "value"
 
-
   ,size   [Cmm]      "StgMVarTSOQueue"
   ,offset [co,cr,cm] "StgMVarTSOQueue" "link"
   ,offset [co,cr,cm] "StgMVarTSOQueue" "tso"
@@ -394,20 +393,26 @@ wanteds_p = concat
   ]
 
 wanteds_profOnly = concat
-  [sizeW   both       "StgProfHeader"
-  ,offset_ [bo,cr,cm] "StgHeader"     "prof.ccs"     "StgHeader_ccs"
-  ,offset_ [bo,cr,cm] "StgHeader"     "prof.hp.ldvw" "StgHeader_ldvw"
-  ,offset_ [bo,cr,cm] "StgTSO"        "prof.cccs"    "StgTSO_cccs"
-  ,size    [Cmm]      "StgTSOProfInfo"
+  [sizeW  both       "StgProfHeader"
+  ,offset [bo,br,bm] "StgClosure"     "header.prof.ccs"
+  ,offset [bo,br,bm] "StgClosure"     "header.prof.hp.ldvw"
+  ,offset [bo,br,bm] "StgTSO"         "prof.cccs"
+  ,size   [Cmm]      "StgTSOProfInfo"
   ]
 
-bo,co,br,cr,cm,cmp,crg :: String -> String -> String -> Wanted
-bo  = doOffset_       both
---ho  = doOffset_       [Haskell]
-co  = doOffset_       [Cmm]
+bro             :: String -> String -> String -> String -> Wanted
+bo,co,br,cr,bm,cm,cmp,crg :: String -> String -> String -> Wanted
+bo  = mkOffset_       both
+--ho  = mkOffset_       [Haskell]
+co  = mkOffset_       [Cmm]
+bro = mkRelOffset_    both
+--hro = mkRelOffset_    [Haskell]
+--cro = mkRelOffset_    [Cmm]
 br  = mkRep_          both
 --hr  = mkRep_          [Haskell]
 cr  = mkRep_          [Cmm]
+bm  = mkMacro_        both
+--hm  = mkMacro_        [Haskell]
 cm  = mkMacro_        [Cmm]
 cmp = mkMacroPayload_ [Cmm]
 crg = mkRepGcptr_     [Cmm]
@@ -426,8 +431,8 @@ template =
   , Group wanteds_p $
       If Profiling Then Derive Else Derive
   , Group wanteds_profOnly $
-      If Profiling Then Derive Else (Error $
-       \name -> name ++ " is not accessible when not compiling for PROFILING")
+      If Profiling Then Derive Else $
+       Error (++ " is not accessible when not compiling for PROFILING")
   ]
 
 data Fst a b = Fst a
@@ -441,8 +446,15 @@ data Constant f = Constant String [Target] (Either' f)
 data Either' f = Independant Independant
                | Dependant   (Dependant f)
 
+isDependant,isIndependant :: Wanted -> Bool
+isDependant (Constant _ _ Dependant{}) = True
+isDependant _ = False
+isIndependant = not . isDependant
+
 --Platform Independant Constant
 data Independant = Macro | MacroPayload | RepGcptr
+
+
 
 --Platform Dependant Constant
 data Dependant f = Rep  (f CExpr   Integer) -- note [GetRep]
@@ -477,20 +489,6 @@ showDefine Profiling = "PROFILING"
 newtype CExpr = CExpr     String
 newtype CPPExpr = CPPExpr String
 
-intOffset :: [Target] -> String -> String -> [Wanted]
-intOffset ts nameBase cExpr = [mkInt ts ("OFFSET_" ++ nameBase) cExpr]
-
-doOffset_,mkRep_,mkMacro_, mkMacroPayload_, mkRepGcptr_
-  ::[Target] -> String -> String -> String -> Wanted
-doOffset_ ts theType theField nameBase = mkWord ts name expr
-  where
-    name = "OFFSET_" ++ nameBase
-    expr = "offsetof(" ++ theType ++ "," ++ theField ++ ")"
-mkRep_ ts theType theField nameBase = mkRep ts name expr
-  where
-    name = "REP_" ++ nameBase
-    expr = "FIELD_SIZE(" ++ theType ++ ", " ++ theField ++ ")"
-
 size,sizeW :: [Target] -> String -> [Wanted]
 size ts theType = [mkWord ts name expr]
   where
@@ -501,6 +499,23 @@ sizeW ts theType = [mkWord ts name expr]
   where
     name = "SIZEOFW_"    ++ theType
     expr = "TYPE_SIZEW(" ++ theType ++ ")"
+
+mkOffset_,mkRep_,mkMacro_, mkMacroPayload_, mkRepGcptr_
+             :: [Target]           -> String -> String -> String -> Wanted
+mkRelOffset_ :: [Target] -> String -> String -> String -> String -> Wanted
+mkRelOffset_ ts theField' theType theField nameBase = mkInt ts name expr
+  where
+    name = "OFFSET_" ++ nameBase
+    expr = "(offsetof(" ++ theType  ++ "," ++ theField  ++ "))"
+     ++ " - (offsetof(" ++ theType  ++ "," ++ theField' ++ "))"
+mkOffset_ ts theType theField nameBase = mkWord ts name expr
+  where
+    name = "OFFSET_" ++ nameBase
+    expr = "offsetof(" ++ theType ++ "," ++ theField ++ ")"
+mkRep_ ts theType theField nameBase = mkRep ts name expr
+  where
+    name = "REP_" ++ nameBase
+    expr = "FIELD_SIZE(" ++ theType ++ ", " ++ theField ++ ")"
 
 mkMacro_        ts _ty _fld nm = Constant nm ts $ Independant Macro
 mkMacroPayload_ ts _ty _fld nm = Constant nm ts $ Independant MacroPayload
@@ -547,8 +562,6 @@ getResults ds wanteds = do
     ,"#define TYPE_SIZEW(type) (sizeofW(type))"
     ,"#define FIELD_SIZE(s_type, field) \\"
     ,"((size_t)sizeof(((s_type*)0)->field))"
-    ,"#define FUN_OFFSET(sym)\\"
-    ,"(offsetof(Capability,f.sym) - offsetof(Capability,r))"
     ,""
     ,"#pragma GCC poison sizeof sizeofw"
     ] ++ concatMap doWanted wanteds
@@ -661,7 +674,6 @@ getResults ds wanteds = do
 filterWanteds :: [Wanted] -> Target -> [Wanted]
 filterWanteds ws t = [Constant n ts x | Constant n ts x <- ws, t `elem` ts]
 
-
 writeHaskellType :: IO ()
 writeHaskellType = do
  outFile <- requireOption "no output file" o_outputFile
@@ -677,19 +689,27 @@ writeHaskellType = do
    where
     derive defines = return $ concatMap doWanted $ filterWanteds ws Haskell
      where
-      doWanted (Constant _n   _t (Independant _i)) = error "writeType:Indie"
+      doWanted (Constant _n _t (Independant _i)) = []
       doWanted (Constant name _t (Dependant expr)) =
        ["pc" ++ concatMap show defines ++ "_" ++ name ++ " :: " ++ showType expr]
 
-writeHaskellWrappers :: IO ()
-writeHaskellWrappers = do
+writeHaskellWrappers :: (Wanted -> Bool) -> IO ()
+writeHaskellWrappers p = do
  outFile <- requireOption "no output file" o_outputFile
  mapM doGroup template >>= (writeFile outFile . unlines . concat)
  where
-  doGroup (Group ws conditional) = mapM doWanted (filterWanteds ws Haskell)
-                                    >>= (return . concat)
+  doGroup (Group ws conditional) = mapM doWanted
+    (filter p $ filterWanteds ws Haskell) >>= (return . concat)
    where
-    doWanted (Constant _n   _t (Independant _i)) = error "writeWrappers:Indie"
+    doWanted (Constant name _t (Independant Macro)) = return
+      ["lOAD_" ++ name ++ " :: DynFlags -> CmmExpr -> CmmExpr"
+      ,"sTORE_" ++ name ++ " :: DynFlags -> CmmExpr -> CmmExpr -> CmmAGraph"
+      ,"lOAD_" ++ name ++ " dflags ptr ="
+      ,"  CmmLoad (cmmOffsetB dflags ptr (oFFSET_" ++ name ++ " dflags)) $"
+      ,"    cmmBits $ widthFromBytes $ rEP_" ++ name ++ " dflags"
+      ,"sTORE_" ++ name ++ " dflags ptr val ="
+      ,"  mkStore (cmmOffsetB dflags ptr (oFFSET_" ++ name ++ " dflags)) val"]
+    doWanted (Constant _ _ (Independant _)) = error "writeHaskellWrappers:Indie"
     doWanted (Constant name _t (Dependant expr)) = do
       conds <- doConditional conditional startState {cs_derive     = derive
                                                     ,cs_error      = err
@@ -708,14 +728,16 @@ writeHaskellWrappers = do
        derive ds = return $ ["pc" ++ concatMap show ds ++ "_" ++ name
                              ++ " $ sPlatformConstants $ settings dflags"]
 
-writeHaskellExports :: IO ()
-writeHaskellExports = do
-  outFile <- requireOption "no output file" o_outputFile
-  writeFile outFile $ unlines $ indent 4 $ concatMap doGroup template
-  where
-    doGroup (Group ws _cond) = concatMap doWanted $ filterWanteds ws Haskell
-    doWanted (Constant _n   _t (Independant _i)) = error "writeExports:Indie"
-    doWanted (Constant name _ts _expr   ) = [haskellise name ++ ","]
+writeHaskellExports :: (Wanted -> Bool) -> IO ()
+writeHaskellExports p = do
+ outFile <- requireOption "no output file" o_outputFile
+ writeFile outFile $ unlines $ indent 4 $ commas $ concatMap doGroup template
+ where
+  doGroup (Group ws _) = concatMap doWanted (filter p $ filterWanteds ws Haskell)
+  doWanted (Constant name _ts (Independant Macro)) = ["lOAD_" ++ name
+                                                     ,"sTORE_" ++ name]
+  doWanted (Constant _ _ (Independant _)) = error "writeHaskellExports:Indie"
+  doWanted (Constant name _ts _expr) = [haskellise name]
 
 writeValues :: Target -> IO ()
 writeValues Haskell = do
@@ -734,7 +756,7 @@ writeValues Haskell = do
       rs <- getResults ds $ filterWanteds ws Haskell
       return $ concatMap doResult rs
      where
-      doResult (Constant _n   _t (Independant _i)) = error "writeValues:Indie"
+      doResult (Constant _n   _t (Independant _i)) = []
       doResult (Constant name _ts (Dependant value)) =
         ["pc" ++ concatMap show ds ++ "_" ++ name ++ " = " ++ showVal value]
       showVal (Rep  (Snd v)) = show v
@@ -749,7 +771,6 @@ writeValues Cmm = do
   writeFile outFile $ unlines $
     ["/* This file is created automatically.  Do not edit by hand.*/"
     ,unlines $ concat groups
-    --,unlines special_slow_apply
     ]
  where
   doGroup (Group ws conditional) =
@@ -799,9 +820,9 @@ main :: IO ()
 main = do
   mode <- requireOption "mode" o_mode
   case mode of
+    Gen_Haskell_Wrappers p -> writeHaskellWrappers p
+    Gen_Haskell_Exports  p -> writeHaskellExports p
     Gen_Haskell_Type     -> writeHaskellType
-    Gen_Haskell_Wrappers -> writeHaskellWrappers
-    Gen_Haskell_Exports  -> writeHaskellExports
     Gen_Values target    -> writeValues target
 
 requireOption :: String -> (Options -> Maybe a) -> IO a
@@ -836,10 +857,14 @@ parseArgs = do args <- getArgs
               = f (opts {o_verbose = True}) args'
           f opts ("--gen-haskell-type" : args')
               = f (opts {o_mode = Just Gen_Haskell_Type}) args'
-          f opts ("--gen-haskell-wrappers" : args')
-              = f (opts {o_mode = Just Gen_Haskell_Wrappers}) args'
-          f opts ("--gen-haskell-exports" : args')
-              = f (opts {o_mode = Just Gen_Haskell_Exports}) args'
+          f opts ("--gen-haskell-dflags-wrappers" : args')
+            = f (opts {o_mode = Just (Gen_Haskell_Wrappers isDependant)}) args'
+          f opts ("--gen-haskell-dflags-exports" : args')
+            = f (opts {o_mode = Just (Gen_Haskell_Exports isDependant)}) args'
+          f opts ("--gen-haskell-codegen-wrappers" : args')
+            = f (opts {o_mode = Just (Gen_Haskell_Wrappers isIndependant)}) args'
+          f opts ("--gen-haskell-codegen-exports" : args')
+            = f (opts {o_mode = Just (Gen_Haskell_Exports isIndependant)}) args'
           f opts ("--gen-header" : args')
               = f (opts {o_mode = Just (Gen_Values Cmm)}) args'
           f opts ("--gen-haskell-value" : args')
@@ -866,8 +891,8 @@ parseArgs = do args <- getArgs
                        }
 
 data Mode = Gen_Haskell_Type
-          | Gen_Haskell_Wrappers
-          | Gen_Haskell_Exports
+          | Gen_Haskell_Wrappers (Wanted -> Bool)
+          | Gen_Haskell_Exports  (Wanted -> Bool)
           | Gen_Values Target
 --------------------------------
 -- Boring string manipulation --

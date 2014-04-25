@@ -25,9 +25,9 @@ module CmmUtils(
         mkLblExpr,
         cmmRegOff,  cmmOffset,  cmmLabelOff,  cmmOffsetLit,  cmmOffsetExpr,
         cmmRegOffB, cmmOffsetB, cmmLabelOffB, cmmOffsetLitB, cmmOffsetExprB,
-        cmmLoadIndexB,
+        cmmLoadOffsetB,
         cmmRegOffW, cmmOffsetW, cmmLabelOffW, cmmOffsetLitW, cmmOffsetExprW,
-        cmmIndex, cmmIndexExpr, cmmLoadIndex, cmmLoadIndexW,
+        cmmIndex, cmmIndexExpr, cmmLoadIndex, cmmLoadOffsetW,
         cmmNegate,
         cmmULtWord, cmmUGeWord, cmmUGtWord, cmmSubWord,
         cmmNeWord, cmmEqWord, cmmOrWord, cmmAndWord,
@@ -285,8 +285,8 @@ cmmLabelOffB = cmmLabelOff
 cmmOffsetLitB :: CmmLit -> ByteOff -> CmmLit
 cmmOffsetLitB = cmmOffsetLit
 
-cmmLoadIndexB :: DynFlags -> CmmExpr -> Int -> CmmType -> CmmExpr
-cmmLoadIndexB dflags base off ty = CmmLoad (cmmOffsetB dflags base off) ty
+cmmLoadOffsetB :: DynFlags -> CmmExpr -> Int -> CmmType -> CmmExpr
+cmmLoadOffsetB dflags base off ty = CmmLoad (cmmOffsetB dflags base off) ty
 
 -----------------------
 -- The "W" variants take word offsets
@@ -308,8 +308,8 @@ cmmOffsetLitW dflags lit wd_off = cmmOffsetLitB lit (wordsToBytes dflags wd_off)
 cmmLabelOffW :: DynFlags -> CLabel -> WordOff -> CmmLit
 cmmLabelOffW dflags lbl wd_off = cmmLabelOffB lbl (wordsToBytes dflags wd_off)
 
-cmmLoadIndexW :: DynFlags -> CmmExpr -> Int -> CmmType -> CmmExpr
-cmmLoadIndexW dflags base off ty = CmmLoad (cmmOffsetW dflags base off) ty
+cmmLoadOffsetW :: DynFlags -> CmmExpr -> Int -> CmmType -> CmmExpr
+cmmLoadOffsetW dflags base off ty = CmmLoad (cmmOffsetW dflags base off) ty
 
 -----------------------
 cmmULtWord, cmmUGeWord, cmmUGtWord, cmmSubWord,

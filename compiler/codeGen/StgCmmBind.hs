@@ -679,9 +679,8 @@ pushUpdateFrame lbl updatee body
 
 emitUpdateFrame :: DynFlags -> CmmExpr -> CLabel -> CmmExpr -> FCode ()
 emitUpdateFrame dflags frame lbl updatee = do
-  let off_updatee = oFFSET_StgUpdateFrame_updatee dflags
   emitStore frame (mkLblExpr lbl)
-  emitStore (cmmOffset dflags frame off_updatee) updatee
+  emit $ sTORE_StgUpdateFrame_updatee dflags frame updatee
   initUpdFrameProf frame
 
 -----------------------------------------------------------------------------

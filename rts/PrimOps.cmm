@@ -214,13 +214,13 @@ stg_unsafeThawArrayzh ( gcptr arr )
     // we put it on the mutable list more than once, but it would get scavenged
     // multiple times during GC, which would be unnecessarily slow.
     //
-    if (StgHeader_info(arr) != stg_MUT_ARR_PTRS_FROZEN0_info) {
-        SET_INFO(arr,stg_MUT_ARR_PTRS_DIRTY_info);
+    if (StgClosure_info(arr) != stg_MUT_ARR_PTRS_FROZEN0_info) {
+        StgClosure_info(arr) = stg_MUT_ARR_PTRS_DIRTY_info;
         recordMutable(arr);
         // must be done after SET_INFO, because it ASSERTs closure_MUTABLE()
         return (arr);
     } else {
-        SET_INFO(arr,stg_MUT_ARR_PTRS_DIRTY_info);
+        StgClosure_info(arr) = stg_MUT_ARR_PTRS_DIRTY_info;
         return (arr);
     }
 }
@@ -354,13 +354,13 @@ stg_newSmallArrayzh ( W_ n /* words */, gcptr init )
 stg_unsafeThawSmallArrayzh ( gcptr arr )
 {
     // See stg_unsafeThawArrayzh
-    if (StgHeader_info(arr) != stg_SMALL_MUT_ARR_PTRS_FROZEN0_info) {
-        SET_INFO(arr, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+    if (StgClosure_info(arr) != stg_SMALL_MUT_ARR_PTRS_FROZEN0_info) {
+        StgClosure_info(arr) = stg_SMALL_MUT_ARR_PTRS_DIRTY_info;
         recordMutable(arr);
         // must be done after SET_INFO, because it ASSERTs closure_MUTABLE()
         return (arr);
     } else {
-        SET_INFO(arr, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+        StgClosure_info(arr) = stg_SMALL_MUT_ARR_PTRS_DIRTY_info;
         return (arr);
     }
 }
@@ -390,7 +390,7 @@ stg_copySmallArrayzh ( gcptr src, W_ src_off, gcptr dst, W_ dst_off, W_ n)
 {
     W_ dst_p, src_p, bytes;
 
-    SET_INFO(dst, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+    StgClosure_info(dst) = stg_SMALL_MUT_ARR_PTRS_DIRTY_info;
 
     dst_p = dst + SIZEOF_StgSmallMutArrPtrs + WDS(dst_off);
     src_p = src + SIZEOF_StgSmallMutArrPtrs + WDS(src_off);
@@ -404,7 +404,7 @@ stg_copySmallMutableArrayzh ( gcptr src, W_ src_off, gcptr dst, W_ dst_off, W_ n
 {
     W_ dst_p, src_p, bytes;
 
-    SET_INFO(dst, stg_SMALL_MUT_ARR_PTRS_DIRTY_info);
+    StgClosure_info(dst) = stg_SMALL_MUT_ARR_PTRS_DIRTY_info;
 
     dst_p = dst + SIZEOF_StgSmallMutArrPtrs + WDS(dst_off);
     src_p = src + SIZEOF_StgSmallMutArrPtrs + WDS(src_off);
@@ -471,7 +471,7 @@ stg_casMutVarzh ( gcptr mv, gcptr old, gcptr new )
     if (h != old) {
         return (1,h);
     } else {
-        if (GET_INFO(mv) == stg_MUT_VAR_CLEAN_info) {
+        if (StgClosure_info(mv) == stg_MUT_VAR_CLEAN_info) {
             ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr");
         }
         return (0,new);
@@ -549,7 +549,7 @@ stg_atomicModifyMutVarzh ( gcptr mv, gcptr f )
     StgMutVar_var(mv) = y;
 #endif
 
-    if (GET_INFO(mv) == stg_MUT_VAR_CLEAN_info) {
+    if (StgClosure_info(mv) == stg_MUT_VAR_CLEAN_info) {
         ccall dirty_MUT_VAR(BaseReg "ptr", mv "ptr");
     }
 
@@ -686,7 +686,7 @@ stg_deRefWeakzh ( gcptr w )
     W_ code, info;
     gcptr val;
 
-    info = GET_INFO(w);
+    info = StgClosure_info(w);
 
     if (info == stg_WHITEHOLE_info) {
         // w is locked by another thread. Now it's not immediately clear if w is
@@ -1244,7 +1244,7 @@ retry_pop_stack:
     (r) = ccall stmWait(MyCapability() "ptr", CurrentTSO "ptr", trec "ptr");
     if (r != 0) {
         // Transaction was valid: stmWait put us on the TVars' queues, we now block
-        StgHeader_info(frame) = stg_atomically_waiting_frame_info;
+        StgClosure_info(frame) = stg_atomically_waiting_frame_info;
         Sp = frame;
         R3 = trec; // passing to stmWaitUnblock()
         jump stg_block_stmwait [R3];
@@ -1456,8 +1456,8 @@ loop:
         unlockClosure(mvar, info);
         return (val);
     }
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+    if (StgClosure_info(q) == stg_IND_info ||
+        StgClosure_info(q) == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -1522,8 +1522,8 @@ loop:
         return (1, val);
     }
 
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+    if (StgClosure_info(q) == stg_IND_info ||
+        StgClosure_info(q) == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -1612,8 +1612,8 @@ loop:
         unlockClosure(mvar, stg_MVAR_DIRTY_info);
         return ();
     }
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+    if (StgClosure_info(q) == stg_IND_info ||
+        StgClosure_info(q) == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -1686,8 +1686,8 @@ loop:
         unlockClosure(mvar, stg_MVAR_DIRTY_info);
         return (1);
     }
-    if (StgHeader_info(q) == stg_IND_info ||
-        StgHeader_info(q) == stg_MSG_NULL_info) {
+    if (StgClosure_info(q) == stg_IND_info ||
+        StgClosure_info(q) == stg_MSG_NULL_info) {
         q = StgInd_indirectee(q);
         goto loop;
     }
@@ -2270,7 +2270,7 @@ stg_traceCcszh ( P_ obj, P_ ret )
     W_ ccs;
 
 #ifdef PROFILING
-    ccs = StgHeader_ccs(UNTAG(obj));
+    ccs = StgClosure_ccs(UNTAG(obj));
     ccall fprintCCS_stderr(ccs "ptr");
 #endif
 
