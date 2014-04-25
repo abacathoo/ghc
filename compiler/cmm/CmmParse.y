@@ -60,7 +60,7 @@ bar
   x = R1;  // the calling convention is explicit: better be careful
            // that this works on all platforms!
 
-  jump %ENTRY_CODE(Sp(0))
+  jump StgInfoTable_entry(Sp(0))
 }
 
 Here is a list of rules for high-level and low-level code.  If you
@@ -873,28 +873,8 @@ nameToMachOp name =
 
 exprOp :: FastString -> [CmmParse CmmExpr] -> P (CmmParse CmmExpr)
 exprOp name args_code = do
-  dflags <- getDynFlags
-  case lookupUFM (exprMacros dflags) name of
-     Just f  -> return $ do
-        args <- sequence args_code
-        return (f args)
-     Nothing -> do
-        mo <- nameToMachOp name
-        return $ mkMachOp mo args_code
-
-exprMacros :: DynFlags -> UniqFM ([CmmExpr] -> CmmExpr)
-exprMacros dflags = listToUFM [
-  ( fsLit "ENTRY_CODE",   \ [x] -> entryCode dflags x ),
-  ( fsLit "INFO_PTR",     \ [x] -> closureInfoPtr dflags x ),
-  ( fsLit "STD_INFO",     \ [x] -> infoTable dflags x ),
-  ( fsLit "FUN_INFO",     \ [x] -> funInfoTable dflags x ),
-  ( fsLit "GET_ENTRY",    \ [x] -> entryCode dflags (closureInfoPtr dflags x) ),
-  ( fsLit "GET_STD_INFO", \ [x] -> infoTable dflags (closureInfoPtr dflags x) ),
-  ( fsLit "GET_FUN_INFO", \ [x] -> funInfoTable dflags (closureInfoPtr dflags x) ),
-  ( fsLit "INFO_TYPE",    \ [x] -> infoTableClosureType dflags x ),
-  ( fsLit "INFO_PTRS",    \ [x] -> infoTablePtrs dflags x ),
-  ( fsLit "INFO_NPTRS",   \ [x] -> infoTableNonPtrs dflags x )
-  ]
+  mo <- nameToMachOp name
+  return $ mkMachOp mo args_code
 
 -- we understand a subset of C-- primitives:
 machOps = listToUFM $
@@ -1145,8 +1125,8 @@ doReturn exprs_code = do
 mkReturnSimple  :: DynFlags -> [CmmActual] -> UpdFrameOffset -> CmmAGraph
 mkReturnSimple dflags actuals updfr_off =
   mkReturn dflags e actuals updfr_off
-  where e = entryCode dflags (CmmLoad (CmmStackSlot Old updfr_off)
-                             (gcWord dflags))
+  where e = lOAD_StgInfoTable_entry dflags (CmmLoad (CmmStackSlot Old updfr_off)
+                                                                (gcWord dflags))
 
 doRawJump :: CmmParse CmmExpr -> [GlobalReg] -> CmmParse ()
 doRawJump expr_code vols = do

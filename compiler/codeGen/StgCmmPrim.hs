@@ -30,7 +30,6 @@ import BasicTypes
 import MkGraph
 import StgSyn
 import Cmm
-import CmmInfo
 import Type     ( Type, tyConAppTyCon )
 import TyCon
 import CLabel
@@ -390,7 +389,10 @@ emitPrimOp _      [res] AddrToAnyOp [arg]
 --  #define dataToTagzh(r,a)  r=(GET_TAG(((StgClosure *)a)->header.info))
 --  Note: argument may be tagged!
 emitPrimOp dflags [res] DataToTagOp [arg]
-   = emitAssign (CmmLocal res) (getConstrTag dflags (cmmUntag dflags arg))
+   = emitAssign (CmmLocal res) $ cmmToWord dflags
+                               $ lOAD_StgInfoTable_constr_tag dflags
+                               $ lOAD_StgClosure_info dflags
+                               $ cmmUntag dflags arg
 
 {- Freezing arrays-of-ptrs requires changing an info table, for the
    benefit of the generational collector.  It needs to scavenge mutable

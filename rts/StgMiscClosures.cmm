@@ -38,7 +38,7 @@ INFO_TABLE_RET (stg_stack_underflow_frame, UNDERFLOW_FRAME,
 
     RESTORE_STGREGS
 
-    jump %ENTRY_CODE(Sp(ret_off)) [*]; // NB. all registers live!
+    jump StgInfoTable_entry(Sp(ret_off)) [*]; // NB. all registers live!
 }
 
 /* ----------------------------------------------------------------------------
@@ -51,7 +51,7 @@ INFO_TABLE_RET (stg_restore_cccs, RET_SMALL, W_ info_ptr, W_ cccs)
     CCCS = Sp(1);
 #endif
     Sp_adj(2);
-    jump %ENTRY_CODE(Sp(0)) [*]; // NB. all registers live!
+    jump StgInfoTable_entry(Sp(0)) [*]; // NB. all registers live!
 }
 
 /* ----------------------------------------------------------------------------
@@ -225,7 +225,7 @@ INFO_TABLE(stg_IND,1,0,IND,"IND","IND")
     TICK_ENT_DYN_IND(); /* tick */
     node = UNTAG(StgInd_indirectee(node));
     TICK_ENT_VIA_NODE();
-    jump %GET_ENTRY(node) (node);
+    jump StgInfoTable_entry(StgClosure_info(node)) (node);
 }
 #else
     /* explicit stack */
@@ -233,7 +233,7 @@ INFO_TABLE(stg_IND,1,0,IND,"IND","IND")
     TICK_ENT_DYN_IND(); /* tick */
     R1 = UNTAG(StgInd_indirectee(R1));
     TICK_ENT_VIA_NODE();
-    jump %GET_ENTRY(R1) [R1];
+    jump StgInfoTable_entry(StgClosure_info(R1)) [R1];
 }
 #endif
 
@@ -243,7 +243,7 @@ INFO_TABLE(stg_IND_direct,1,0,IND,"IND","IND")
     TICK_ENT_DYN_IND(); /* tick */
     node = StgInd_indirectee(node);
     TICK_ENT_VIA_NODE();
-    jump %ENTRY_CODE(Sp(0)) (node);
+    jump StgInfoTable_entry(Sp(0)) (node);
 }
 
 INFO_TABLE(stg_IND_STATIC,1,0,IND_STATIC,"IND_STATIC","IND_STATIC")
@@ -252,7 +252,7 @@ INFO_TABLE(stg_IND_STATIC,1,0,IND_STATIC,"IND_STATIC","IND_STATIC")
     TICK_ENT_STATIC_IND(); /* tick */
     R1 = UNTAG(StgInd_indirectee(R1));
     TICK_ENT_VIA_NODE();
-    jump %GET_ENTRY(R1) [R1];
+    jump StgInfoTable_entry(StgClosure_info(R1)) [R1];
 }
 
 INFO_TABLE(stg_IND_PERM,1,0,IND_PERM,"IND_PERM","IND_PERM")
@@ -291,7 +291,7 @@ INFO_TABLE(stg_IND_PERM,1,0,IND_PERM,"IND_PERM","IND_PERM")
     TICK_ENT_VIA_NODE();
 #endif
 
-    jump %GET_ENTRY(R1) [R1];
+    jump StgInfoTable_entry(StgClosure_info(R1)) [R1];
 }
 
 /* ----------------------------------------------------------------------------
@@ -400,7 +400,7 @@ loop:
         }
         goto loop;
     }
-    jump %ENTRY_CODE(info) (node);
+    jump StgInfoTable_entry(info) (node);
 #else
     ccall barf("WHITEHOLE object entered!") never returns;
 #endif

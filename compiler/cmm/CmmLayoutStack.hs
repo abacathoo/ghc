@@ -3,12 +3,12 @@ module CmmLayoutStack (
        cmmLayoutStack, setInfoTableStackMap
   ) where
 
-import StgCmmUtils      ( callerSaveVolatileRegs ) -- XXX layering violation
+import StgCmmUtils      ( callerSaveVolatileRegs,
+                          lOAD_StgInfoTable_entry ) -- XXX layering violation
 import StgCmmForeign    ( saveThreadState, loadThreadState ) -- XXX layering violation
 
 import BasicTypes
 import Cmm
-import CmmInfo
 import BlockId
 import CLabel
 import CmmUtils
@@ -1014,7 +1014,7 @@ lowerSafeForeignCall dflags block
         -- received an exception during the call, then the stack might be
         -- different.  Hence we continue by jumping to the top stack frame,
         -- not by jumping to succ.
-        jump = CmmCall { cml_target    = entryCode dflags $
+        jump = CmmCall { cml_target    = lOAD_StgInfoTable_entry dflags $
                                          CmmLoad (CmmReg spReg) (bWord dflags)
                        , cml_cont      = Just succ
                        , cml_args_regs = regs

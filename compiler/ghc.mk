@@ -478,7 +478,6 @@ compiler_stage2_dll0_MODULES = \
 	Cmm \
 	CmmCallConv \
 	CmmExpr \
-	CmmInfo \
 	CmmMachOp \
 	CmmNode \
 	CmmType \
@@ -599,7 +598,6 @@ compiler_stage2_dll0_MODULES = \
 	StgCmmTicky \
 	StgCmmUtils \
 	StgSyn \
-	Stream \
 	StringBuffer \
 	TcEvidence \
 	TcIface \

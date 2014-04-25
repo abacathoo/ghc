@@ -136,18 +136,6 @@ wanteds_i = concat
   ,offset_ [co,cr,cm] "RTS_FLAGS" "MiscFlags.tickInterval"
                          "RtsFlags_MiscFlags_tickInterval"
 
-  ,size    both       "StgFunInfoExtraFwd"
-  ,offset  [co,cr,cm] "StgFunInfoExtraFwd" "slow_apply"
-  ,offset  [co,cr,cm] "StgFunInfoExtraFwd" "fun_type"
-  ,offset  [bo,br,cm] "StgFunInfoExtraFwd" "arity"
-  ,offset_ [co,cr,cm] "StgFunInfoExtraFwd" "b.bitmap" "StgFunInfoExtraFwd_bitmap"
-
-  ,size    both       "StgFunInfoExtraRev"
-  ,offset  [co,cr,cm] "StgFunInfoExtraRev" "slow_apply_offset"
-  ,offset  [co,cr,cm] "StgFunInfoExtraRev" "fun_type"
-  ,offset  [bo,br,cm] "StgFunInfoExtraRev" "arity"
-  ,offset_ [co,cr,cm] "StgFunInfoExtraRev" "b.bitmap" "StgFunInfoExtraRev_bitmap"
-
   ,offset  [co,cr,cm] "StgLargeBitmap" "size"
   ,offset  [co]       "StgLargeBitmap" "bitmap"
 
@@ -389,7 +377,44 @@ wanteds_p = concat
   ,offset [co,cr,cm] "MessageBlackHole" "tso"
   ,offset [co,cr,cm] "MessageBlackHole" "bh"
 
-  ,size  [Cmm]      "StgInfoTable"
+  ,size [Haskell] "StgRetInfoTable"
+
+  ,size   both    "StgInfoTable"
+
+#if defined(TABLES_NEXT_TO_CODE)
+  ,lit [Cmm]     "StgInfoTable_entry" [def "StgInfoTable_entry(ptr)" "(ptr)"]
+  ,lit [Haskell] "lOAD_StgInfoTable_entry"
+    ["lOAD_StgInfoTable_entry :: DynFlags -> CmmExpr -> CmmExpr"
+    ,"lOAD_StgInfoTable_entry _dflags ptr = ptr"]
+
+  ,offset [bro "code",br,cm] "StgInfoTable" "layout.payload.ptrs"
+  ,offset [bro "code",br,cm] "StgInfoTable" "layout.payload.nptrs"
+  ,offset [bro "code",br,cm] "StgInfoTable" "type"
+  ,offset [hro "code",hr,hm] "StgInfoTable" "u.constr_tag"
+
+#else
+  ,offset [bo,br,bm] "StgInfoTable" "entry"
+  ,offset [bo,br,cm] "StgInfoTable" "layout.payload.ptrs"
+  ,offset [bo,br,cm] "StgInfoTable" "layout.payload.nptrs"
+  ,offset [bo,br,cm] "StgInfoTable" "type"
+  ,offset [ho,hr,hm] "StgInfoTable" "u.constr_tag"
+#endif
+
+#if defined(TABLES_NEXT_TO_CODE)
+  ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.slow_apply_offset"
+  ,lit [Cmm] "StgFunInfoTable_slow_apply"
+    ["#define StgFunInfoTable_slow_apply(ptr) \\"
+    ," (TO_W_(StgFunInfoTable_slow_apply_offset(ptr)) + StgInfoTable_entry(ptr))"
+    ]
+  ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.fun_type"
+  ,offset [bro "i.code",br,bm] "StgFunInfoTable" "f.arity"
+  ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.b.bitmap"
+#else
+  ,offset [cro "i",cr,cm] "StgFunInfoTable" "f.slow_apply"
+  ,offset [cro "i",cr,cm] "StgFunInfoTable" "f.fun_type"
+  ,offset [bro "i",br,bm] "StgFunInfoTable" "f.arity"
+  ,offset [cro "i",cr,cm] "StgFunInfoTable" "f.b.bitmap"
+#endif
   ]
 
 wanteds_profOnly = concat
@@ -400,19 +425,19 @@ wanteds_profOnly = concat
   ,size   [Cmm]      "StgTSOProfInfo"
   ]
 
-bro             :: String -> String -> String -> String -> Wanted
-bo,co,br,cr,bm,cm,cmp,crg :: String -> String -> String -> Wanted
+bro,hro,cro           :: String -> String -> String -> String -> Wanted
+bo,co,br,cr,hr,bm,cm,hm,cmp,crg :: String -> String -> String -> Wanted
 bo  = mkOffset_       both
 --ho  = mkOffset_       [Haskell]
 co  = mkOffset_       [Cmm]
 bro = mkRelOffset_    both
---hro = mkRelOffset_    [Haskell]
---cro = mkRelOffset_    [Cmm]
+hro = mkRelOffset_    [Haskell]
+cro = mkRelOffset_    [Cmm]
 br  = mkRep_          both
---hr  = mkRep_          [Haskell]
+hr  = mkRep_          [Haskell]
 cr  = mkRep_          [Cmm]
 bm  = mkMacro_        both
---hm  = mkMacro_        [Haskell]
+hm  = mkMacro_        [Haskell]
 cm  = mkMacro_        [Cmm]
 cmp = mkMacroPayload_ [Cmm]
 crg = mkRepGcptr_     [Cmm]
@@ -452,7 +477,7 @@ isDependant _ = False
 isIndependant = not . isDependant
 
 --Platform Independant Constant
-data Independant = Macro | MacroPayload | RepGcptr
+data Independant = Macro | MacroPayload | RepGcptr | Literal [String]
 
 
 
@@ -499,6 +524,9 @@ sizeW ts theType = [mkWord ts name expr]
   where
     name = "SIZEOFW_"    ++ theType
     expr = "TYPE_SIZEW(" ++ theType ++ ")"
+
+lit :: [Target] -> String -> [String] -> [Wanted]
+lit ts nm strs  = [Constant nm ts $ Independant $ Literal strs]
 
 mkOffset_,mkRep_,mkMacro_, mkMacroPayload_, mkRepGcptr_
              :: [Target]           -> String -> String -> String -> Wanted
@@ -709,6 +737,7 @@ writeHaskellWrappers p = do
       ,"    cmmBits $ widthFromBytes $ rEP_" ++ name ++ " dflags"
       ,"sTORE_" ++ name ++ " dflags ptr val ="
       ,"  mkStore (cmmOffsetB dflags ptr (oFFSET_" ++ name ++ " dflags)) val"]
+    doWanted (Constant _ _ (Independant (Literal strs))) = return strs
     doWanted (Constant _ _ (Independant _)) = error "writeHaskellWrappers:Indie"
     doWanted (Constant name _t (Dependant expr)) = do
       conds <- doConditional conditional startState {cs_derive     = derive
@@ -736,6 +765,7 @@ writeHaskellExports p = do
   doGroup (Group ws _) = concatMap doWanted (filter p $ filterWanteds ws Haskell)
   doWanted (Constant name _ts (Independant Macro)) = ["lOAD_" ++ name
                                                      ,"sTORE_" ++ name]
+  doWanted (Constant name _ts (Independant Literal{})) = [name]
   doWanted (Constant _ _ (Independant _)) = error "writeHaskellExports:Indie"
   doWanted (Constant name _ts _expr) = [haskellise name]
 
@@ -797,6 +827,7 @@ writeValues Cmm = do
       showVal (Bool (Snd v)) = show $ fromEnum v
       doResult (Constant name _ts (Dependant val)) = [def name $ showVal val]
       doResult (Constant name _ts (Independant typ)) = case typ of
+        Literal strs -> strs
         RepGcptr -> [def ("REP_" ++ name) " gcptr"]
         Macro    -> [def x y]
          where x =  name ++ "(__ptr__)"

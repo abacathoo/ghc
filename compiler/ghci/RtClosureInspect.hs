@@ -175,25 +175,27 @@ getClosureData :: DynFlags -> a -> IO Closure
 getClosureData dflags a =
    case unpackClosure# a of 
      (# iptr, ptrs, nptrs #) -> do
-           let iptr'
-                | ghciTablesNextToCode =
-                   Ptr iptr
-                | otherwise =
-                   -- the info pointer we get back from unpackClosure#
-                   -- is to the beginning of the standard info table,
-                   -- but the Storable instance for info tables takes
-                   -- into account the extra entry pointer when
-                   -- !ghciTablesNextToCode, so we must adjust here:
-                   Ptr iptr `plusPtr` negate (wORD_SIZE dflags)
-           itbl <- peekItbl dflags iptr'
+           let iptr_ptrs = Ptr iptr `plusPtr` oFFSET_StgInfoTable_ptrs dflags
+               iptr_entry = Ptr iptr
+
+ -- Note [iptr_entry]
+ -- When TABLES_NEXT_TO_CODE, iptr points to the code field of StgInfoTable
+ -- oFFSET_StgInfoTable_ptrs is a negative offset which adjusts the iptr
+ -- to point to the layout.ptrs field (the first field in StgInfoTable).
+
+ -- When !TABLES_NEXT_TO_CODE, iptr points to the entry field of StgInfoTable.
+ -- This is what ghci expects to see, and no adjustment is neccecary.
+
+           itbl <- peekItbl dflags (if ghciTablesNextToCode then -- Note
+                                      iptr_ptrs else iptr_entry) -- [iptr_entry]
            let tipe = readCType (BCI.tipe itbl)
                elems = fromIntegral (BCI.ptrs itbl)
                ptrsList = Array 0 (elems - 1) elems ptrs
                nptrs_data = [W# (indexWordArray# nptrs i)
                               | I# i <- [0.. fromIntegral (BCI.nptrs itbl)-1] ]
            ASSERT(elems >= 0) return ()
-           ptrsList `seq` 
-            return (Closure tipe (Ptr iptr) itbl ptrsList nptrs_data)
+           ptrsList `seq`
+            return (Closure tipe iptr_ptrs itbl ptrsList nptrs_data)
 
 readCType :: Integral a => a -> ClosureType
 readCType i 

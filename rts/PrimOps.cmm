@@ -217,7 +217,7 @@ stg_unsafeThawArrayzh ( gcptr arr )
     if (StgClosure_info(arr) != stg_MUT_ARR_PTRS_FROZEN0_info) {
         StgClosure_info(arr) = stg_MUT_ARR_PTRS_DIRTY_info;
         recordMutable(arr);
-        // must be done after SET_INFO, because it ASSERTs closure_MUTABLE()
+        // must be done after setting info, because it ASSERTs closure_MUTABLE()
         return (arr);
     } else {
         StgClosure_info(arr) = stg_MUT_ARR_PTRS_DIRTY_info;
@@ -357,7 +357,7 @@ stg_unsafeThawSmallArrayzh ( gcptr arr )
     if (StgClosure_info(arr) != stg_SMALL_MUT_ARR_PTRS_FROZEN0_info) {
         StgClosure_info(arr) = stg_SMALL_MUT_ARR_PTRS_DIRTY_info;
         recordMutable(arr);
-        // must be done after SET_INFO, because it ASSERTs closure_MUTABLE()
+        // must be done after setting StgClosure_info(arr), because it ASSERTs closure_MUTABLE()
         return (arr);
     } else {
         StgClosure_info(arr) = stg_SMALL_MUT_ARR_PTRS_DIRTY_info;
@@ -1309,7 +1309,7 @@ stg_readTVarIOzh ( P_ tvar /* :: TVar a */ )
 
 again:
     result = StgTVar_current_value(tvar);
-    if (%INFO_PTR(result) == stg_TREC_HEADER_info) {
+    if (StgClosure_info(result) == stg_TREC_HEADER_info) {
         goto again;
     }
     return (result);
@@ -1882,7 +1882,7 @@ stg_mkApUpd0zh ( P_ bco )
     // This function is *only* used to wrap zero-arity BCOs in an
     // updatable wrapper (see ByteCodeLink.lhs).  An AP thunk is always
     // saturated and always points directly to a FUN or BCO.
-    ASSERT(%INFO_TYPE(%GET_STD_INFO(bco)) == HALF_W_(BCO) &&
+    ASSERT(StgInfoTable_type(StgClosure_info(bco)) == HALF_W_(BCO) &&
            StgBCO_arity(bco) == HALF_W_(0));
 
     HP_CHK_P(SIZEOF_StgAP, stg_mkApUpd0zh, bco);
@@ -1903,11 +1903,11 @@ stg_unpackClosurezh ( P_ closure )
 // TODO: Consider the absence of ptrs or nonptrs as a special case ?
 
     W_ info, ptrs, nptrs, p, ptrs_arr, nptrs_arr;
-    info  = %GET_STD_INFO(UNTAG(closure));
+    info  = StgClosure_info(UNTAG(closure));
 
     // Some closures have non-standard layout, so we omit those here.
     W_ type;
-    type = TO_W_(%INFO_TYPE(info));
+    type = TO_W_(StgInfoTable_type(info));
     switch [0 .. N_CLOSURE_TYPES] type {
     case THUNK_SELECTOR : {
         ptrs = 1;
@@ -1921,8 +1921,8 @@ stg_unpackClosurezh ( P_ closure )
         goto out;
     }
     default: {
-        ptrs  = TO_W_(%INFO_PTRS(info));
-        nptrs = TO_W_(%INFO_NPTRS(info));
+        ptrs  = TO_W_(StgInfoTable_ptrs(info));
+        nptrs = TO_W_(StgInfoTable_nptrs(info));
         goto out;
     }}
 out:
@@ -2222,7 +2222,7 @@ stg_noDuplicatezh /* no arg list: explicit stack layout */
 {
     // With a single capability there's no chance of work duplication.
     if (CInt[n_capabilities] == 1 :: CInt) {
-        jump %ENTRY_CODE(Sp(0)) [];
+        jump StgInfoTable_entry(Sp(0)) [];
     }
 
     STK_CHK_LL (WDS(1), stg_noDuplicatezh);
@@ -2245,7 +2245,7 @@ stg_noDuplicatezh /* no arg list: explicit stack layout */
         if (Sp(0) == stg_noDuplicate_info) {
             Sp_adj(1);
         }
-        jump %ENTRY_CODE(Sp(0)) [];
+        jump StgInfoTable_entry(Sp(0)) [];
     }
 }
 
@@ -2255,7 +2255,7 @@ stg_noDuplicatezh /* no arg list: explicit stack layout */
 
 stg_getApStackValzh ( P_ ap_stack, W_ offset )
 {
-   if (%INFO_PTR(ap_stack) == stg_AP_STACK_info) {
+   if (StgClosure_info(ap_stack) == stg_AP_STACK_info) {
        return (1,StgAP_STACK_payload(ap_stack,offset));
    } else {
        return (0,ap_stack);
