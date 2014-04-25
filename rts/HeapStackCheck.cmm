@@ -106,7 +106,7 @@ stg_gc_noregs
                 ret = ThreadYielding;
                 goto sched;
             } else {
-                jump %ENTRY_CODE(Sp(0)) [];
+                jump StgInfoTable_entry(Sp(0)) [];
             }
         } else {
             ret = HeapOverflow;
@@ -390,20 +390,20 @@ __stg_gc_fun /* explicit stack */
     W_ info;
     W_ type;
 
-    info = %GET_FUN_INFO(UNTAG(R1));
+    info = StgClosure_info(UNTAG(R1));
 
     // cache the size
-    type = TO_W_(StgFunInfoExtra_fun_type(info));
+    type = TO_W_(StgFunInfoTable_fun_type(info));
     if (type == ARG_GEN) {
-	size = BITMAP_SIZE(StgFunInfoExtra_bitmap(info));
+	size = BITMAP_SIZE(StgFunInfoTable_bitmap(info));
     } else { 
 	if (type == ARG_GEN_BIG) {
 #ifdef TABLES_NEXT_TO_CODE
             // bitmap field holds an offset
-            size = StgLargeBitmap_size( StgFunInfoExtra_bitmap(info)
-                                        + %GET_ENTRY(UNTAG(R1)) /* ### */ );
+            size = StgLargeBitmap_size( StgFunInfoTable_bitmap(info)
+                                        + StgInfoTable_entry(StgClosure_info(UNTAG(R1))) /* ### */ );
 #else
-	    size = StgLargeBitmap_size( StgFunInfoExtra_bitmap(info) );
+	    size = StgLargeBitmap_size( StgFunInfoTable_bitmap(info) );
 #endif
 	} else {
 	    size = BITMAP_SIZE(W_[stg_arg_bitmaps + WDS(type)]);
@@ -419,7 +419,7 @@ __stg_gc_fun /* explicit stack */
     jump stg_gc_noregs [];
 #else
     W_ type;
-    type = TO_W_(StgFunInfoExtra_fun_type(info));
+    type = TO_W_(StgFunInfoTable_fun_type(info));
     // cache the size
     if (type == ARG_GEN || type == ARG_GEN_BIG) {
         // regs already saved by the heap check code
@@ -453,15 +453,15 @@ INFO_TABLE_RET ( stg_gc_fun, RET_FUN )
 #ifdef NO_ARG_REGS
     // Minor optimisation: there are no argument registers to load up,
     // so we can just jump straight to the function's entry point.
-    jump %GET_ENTRY(UNTAG(R1)) [R1];
+    jump StgInfoTable_entry(StgClosure_info(UNTAG(R1))) [R1];
 #else
     W_ info;
     W_ type;
     
-    info = %GET_FUN_INFO(UNTAG(R1));
-    type = TO_W_(StgFunInfoExtra_fun_type(info));
+    info = StgClosure_info(UNTAG(R1));
+    type = TO_W_(StgFunInfoTable_fun_type(info));
     if (type == ARG_GEN || type == ARG_GEN_BIG) {
-        jump StgFunInfoExtra_slow_apply(info) [R1];
+        jump StgFunInfoTable_slow_apply(info) [R1];
     } else { 
 	if (type == ARG_BCO) {
 	    // cover this case just to be on the safe side
@@ -624,7 +624,7 @@ stg_block_throwto_finally
     // unlock the throwto message, but only if it wasn't already
     // unlocked.  It may have been unlocked if we revoked the message
     // due to an exception being raised during threadPaused().
-    if (StgHeader_info(StgTSO_block_info(CurrentTSO)) == stg_WHITEHOLE_info) {
+    if (StgClosure_info(StgTSO_block_info(CurrentTSO)) == stg_WHITEHOLE_info) {
         W_ r1;
         r1 = R1;
         unlockClosure(StgTSO_block_info(CurrentTSO), stg_MSG_THROWTO_info);

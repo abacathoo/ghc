@@ -78,7 +78,7 @@
         if (NEED_EVAL(selectee)) {                                      \
           SAVE_CCS;                                                     \
           dest = UNTAG_IF_PROF(selectee); /* Note [untag for prof] */   \
-          (P_ constr) = call %GET_ENTRY(dest) (dest);                   \
+          (P_ constr) = call StgInfoTable_entry(StgClosure_info(dest)) (dest);                   \
           RESTORE_CCS;                                                  \
           selectee = constr;                                            \
         }                                                               \
@@ -122,7 +122,7 @@ SELECTOR_CODE_UPD(15)
       if (NEED_EVAL(selectee)) {                                        \
           SAVE_CCS;                                                     \
           dest = UNTAG_IF_PROF(selectee); /* Note [untag for prof] */   \
-          (P_ constr) = call %GET_ENTRY(dest) (dest);                   \
+          (P_ constr) = call StgInfoTable_entry(StgClosure_info(dest)) (dest);                   \
           RESTORE_CCS;                                                  \
           selectee = constr;                                            \
       }                                                                 \

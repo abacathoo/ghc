@@ -21,7 +21,7 @@ module StgCmmForeign (
 #include "HsVersions.h"
 
 import StgSyn
-import StgCmmProf (storeCurCCS, ccsType, curCCS)
+import StgCmmProf (storeCurCCS, curCCS)
 import StgCmmEnv
 import StgCmmMonad
 import StgCmmUtils
@@ -283,11 +283,11 @@ saveThreadState dflags tso cn =
     -- tso = CurrentTSO;
     mkAssign (CmmLocal tso) stgCurrentTSO,
     -- tso->stackobj->sp = Sp;
-    mkStore (cmmOffset dflags (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso)) (oFFSET_StgTSO_stackobj dflags)) (bWord dflags)) (oFFSET_StgStack_sp dflags)) stgSp,
+    sTORE_StgStack_sp dflags (lOAD_StgTSO_stackobj dflags stgCurrentTSO) stgSp,
     closeNursery dflags tso cn,
     -- and save the current cost centre stack in the TSO when profiling:
     if gopt Opt_SccProfilingOn dflags then
-        mkStore (cmmOffset dflags (CmmReg (CmmLocal tso)) (oFFSET_StgTSO_cccs dflags)) curCCS
+        sTORE_StgTSO_cccs dflags stgCurrentTSO curCCS
       else mkNop
     ]
 
@@ -327,19 +327,17 @@ closeNursery df tso cn =
     let alloc =
            CmmMachOp (mo_wordSub df)
               [ cmmOffsetW df stgHp 1
-              , CmmLoad (nursery_bdescr_start df cnreg) (bWord df)
+              , lOAD_bdescr_start df (CmmReg cnreg)
               ]
-
-        alloc_limit = cmmOffset df (CmmReg tsoreg) (tso_alloc_limit df)
     in
 
     -- tso->alloc_limit += alloc
-    mkStore alloc_limit (CmmMachOp (mo_wordSub df)
-                               [ CmmLoad alloc_limit b64
+    sTORE_StgTSO_alloc_limit df (CmmReg tsoreg) (CmmMachOp (mo_wordSub df)
+                               [ lOAD_StgTSO_alloc_limit df (CmmReg tsoreg)
                                , alloc ]),
 
     -- CurrentNursery->free = Hp+1;
-    mkStore (nursery_bdescr_free df cnreg) (cmmOffsetW df stgHp 1)
+    sTORE_bdescr_free df (CmmReg cnreg) (cmmOffsetW df stgHp 1)
    ]
 
 emitLoadThreadState :: FCode ()
@@ -363,9 +361,9 @@ loadThreadState dflags tso stack cn bdfree bdstart =
     -- tso = CurrentTSO;
     mkAssign (CmmLocal tso) stgCurrentTSO,
     -- stack = tso->stackobj;
-    mkAssign (CmmLocal stack) (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso)) (oFFSET_StgTSO_stackobj dflags)) (bWord dflags)),
+    mkAssign (CmmLocal stack) (lOAD_StgTSO_stackobj dflags (CmmReg (CmmLocal tso))),
     -- Sp = stack->sp;
-    mkAssign sp (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal stack)) (oFFSET_StgStack_sp dflags)) (bWord dflags)),
+    mkAssign sp (lOAD_StgStack_sp dflags (CmmReg (CmmLocal stack))),
     -- SpLim = stack->stack + RESERVED_STACK_WORDS;
     mkAssign spLim (cmmOffsetW dflags (cmmOffset dflags (CmmReg (CmmLocal stack)) (oFFSET_StgStack_stack dflags))
                                 (rESERVED_STACK_WORDS dflags)),
@@ -376,9 +374,7 @@ loadThreadState dflags tso stack cn bdfree bdstart =
     openNursery dflags tso cn bdfree bdstart,
     -- and load the current cost centre stack from the TSO when profiling:
     if gopt Opt_SccProfilingOn dflags
-       then storeCurCCS
-              (CmmLoad (cmmOffset dflags (CmmReg (CmmLocal tso))
-                 (oFFSET_StgTSO_cccs dflags)) (ccsType dflags))
+       then storeCurCCS $ lOAD_StgTSO_cccs dflags $ CmmReg $ CmmLocal tso
        else mkNop
    ]
 
@@ -429,20 +425,19 @@ openNursery df tso cn bdfree bdstart =
   in
   catAGraphs [
      mkAssign cnreg stgCurrentNursery,
-     mkAssign bdfreereg  (CmmLoad (nursery_bdescr_free df cnreg)  (bWord df)),
-     mkAssign bdstartreg (CmmLoad (nursery_bdescr_start df cnreg) (bWord df)),
+     mkAssign bdfreereg  $ lOAD_bdescr_free df $ CmmReg cnreg,
+     mkAssign bdstartreg $ lOAD_bdescr_start df $ CmmReg cnreg,
 
      -- alloc = bd->free - bd->start
      let alloc =
            CmmMachOp (mo_wordSub df) [CmmReg bdfreereg, CmmReg bdstartreg]
-
-         alloc_limit = cmmOffset df (CmmReg tsoreg) (tso_alloc_limit df)
      in
 
      -- tso->alloc_limit += alloc
-     mkStore alloc_limit (CmmMachOp (mo_wordAdd df)
-                               [ CmmLoad alloc_limit b64
-                               , alloc ]),
+     sTORE_StgTSO_alloc_limit df (CmmReg tsoreg) $
+       CmmMachOp (mo_wordAdd df)
+         [lOAD_StgTSO_alloc_limit df (CmmReg cnreg)
+         , alloc ],
 
      -- Hp = CurrentNursery->free - 1;
      mkAssign hp (cmmOffsetW df (CmmReg bdfreereg) (-1)),
@@ -455,22 +450,13 @@ openNursery df tso cn bdfree bdstart =
              (cmmOffset df
                (CmmMachOp (mo_wordMul df) [
                  CmmMachOp (MO_SS_Conv W32 (wordWidth df))
-                   [CmmLoad (nursery_bdescr_blocks df cnreg) b32],
+                   [lOAD_bdescr_blocks df (CmmReg cnreg)],
                  mkIntExpr df (bLOCK_SIZE df)
                 ])
                (-1)
              )
          )
    ]
-
-nursery_bdescr_free, nursery_bdescr_start, nursery_bdescr_blocks
-  :: DynFlags -> CmmReg -> CmmExpr
-nursery_bdescr_free   dflags cn =
-  cmmOffset dflags (CmmReg cn) (oFFSET_bdescr_free dflags)
-nursery_bdescr_start  dflags cn =
-  cmmOffset dflags (CmmReg cn) (oFFSET_bdescr_start dflags)
-nursery_bdescr_blocks dflags cn =
-  cmmOffset dflags (CmmReg cn) (oFFSET_bdescr_blocks dflags)
 
 stgSp, stgHp, stgCurrentTSO, stgCurrentNursery :: CmmExpr
 stgSp             = CmmReg sp

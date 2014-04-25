@@ -251,7 +251,7 @@
 // "used".
 
 #define LOAD_INFO(ret,x)                        \
-    info = %INFO_PTR(UNTAG(x));
+    info = StgClosure_info(UNTAG(x));
 
 #define UNTAG_IF_PROF(x) UNTAG(x)
 
@@ -261,7 +261,7 @@
   if (GETTAG(x) != 0) {                         \
       ret(x);                                   \
   }                                             \
-  info = %INFO_PTR(x);
+  info = StgClosure_info(x);
 
 #define UNTAG_IF_PROF(x) (x) /* already untagged */
 
@@ -278,14 +278,14 @@
 #define ENTER(x) ENTER_(return,x)
 #define ENTER_R1() ENTER_(RET_R1,R1)
 
-#define RET_R1(x) jump %ENTRY_CODE(Sp(0)) [R1]
+#define RET_R1(x) jump StgInfoTable_entry(Sp(0)) [R1]
 
 #define ENTER_(ret,x)                                   \
  again:							\
   W_ info;						\
   LOAD_INFO(ret,x)                                       \
   switch [INVALID_OBJECT .. N_CLOSURE_TYPES]		\
-         (TO_W_( %INFO_TYPE(%STD_INFO(info)) )) {	\
+         (TO_W_( StgInfoTable_type(info) )) {	\
   case							\
     IND,						\
     IND_PERM,						\
@@ -310,7 +310,7 @@
   default:						\
    {							\
        x = UNTAG_IF_PROF(x);                            \
-       jump %ENTRY_CODE(info) (x);                      \
+       jump StgInfoTable_entry(info) (x);              \
    }							\
   }
 
@@ -529,13 +529,9 @@
 /* The number of words allocated in an array payload */
 #define BYTE_ARR_WDS(arr) ROUNDUP_BYTES_TO_WDS(StgArrWords_bytes(arr))
 
-/* Getting/setting the info pointer of a closure */
-#define SET_INFO(p,info) StgHeader_info(p) = info
-#define GET_INFO(p) StgHeader_info(p)
-
 /* Determine the size of an ordinary closure from its info table */
 #define sizeW_fromITBL(itbl) \
-  SIZEOF_StgHeader + WDS(%INFO_PTRS(itbl)) + WDS(%INFO_NPTRS(itbl))
+  SIZEOF_StgHeader + WDS(StgInfoTable_ptrs(itbl)) + WDS(StgInfoTable_nptrs(itbl))
 
 /* NB. duplicated from InfoTables.h! */
 #define BITMAP_SIZE(bitmap) ((bitmap) & BITMAP_SIZE_MASK)
@@ -547,35 +543,10 @@
     LOOKS_LIKE_INFO_PTR_NOT_NULL(p))
 
 #define LOOKS_LIKE_INFO_PTR_NOT_NULL(p)                         \
-   ( (TO_W_(%INFO_TYPE(%STD_INFO(p))) != INVALID_OBJECT) &&     \
-     (TO_W_(%INFO_TYPE(%STD_INFO(p))) <  N_CLOSURE_TYPES))
+   ( (TO_W_(StgInfoTable_type(p)) != INVALID_OBJECT) &&     \
+     (TO_W_(StgInfoTable_type(p)) <  N_CLOSURE_TYPES))
 
-#define LOOKS_LIKE_CLOSURE_PTR(p) (LOOKS_LIKE_INFO_PTR(GET_INFO(UNTAG(p))))
-
-/*
- * The layout of the StgFunInfoExtra part of an info table changes
- * depending on TABLES_NEXT_TO_CODE.  So we define field access
- * macros which use the appropriate version here:
- */
-#ifdef TABLES_NEXT_TO_CODE
-/*
- * when TABLES_NEXT_TO_CODE, slow_apply is stored as an offset
- * instead of the normal pointer.
- */
-        
-#define StgFunInfoExtra_slow_apply(fun_info)    \
-        (TO_W_(StgFunInfoExtraRev_slow_apply_offset(fun_info))    \
-               + (fun_info) + SIZEOF_StgFunInfoExtraRev + SIZEOF_StgInfoTable)
-
-#define StgFunInfoExtra_fun_type(i)   StgFunInfoExtraRev_fun_type(i)
-#define StgFunInfoExtra_arity(i)      StgFunInfoExtraRev_arity(i)
-#define StgFunInfoExtra_bitmap(i)     StgFunInfoExtraRev_bitmap(i)
-#else
-#define StgFunInfoExtra_slow_apply(i) StgFunInfoExtraFwd_slow_apply(i)
-#define StgFunInfoExtra_fun_type(i)   StgFunInfoExtraFwd_fun_type(i)
-#define StgFunInfoExtra_arity(i)      StgFunInfoExtraFwd_arity(i)
-#define StgFunInfoExtra_bitmap(i)     StgFunInfoExtraFwd_bitmap(i)
-#endif
+#define LOOKS_LIKE_CLOSURE_PTR(p) (LOOKS_LIKE_INFO_PTR(StgClosure_info(UNTAG(p))))
 
 #define mutArrCardMask ((1 << MUT_ARR_PTRS_CARD_BITS) - 1)
 #define mutArrPtrCardDown(i) ((i) >> MUT_ARR_PTRS_CARD_BITS)

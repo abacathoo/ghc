@@ -346,7 +346,7 @@ scavenge_thunk_srt(const StgInfoTable *info)
     if (!major_gc) return;
 
     thunk_info = itbl_to_thunk_itbl(info);
-    scavenge_srt((StgClosure **)GET_SRT(thunk_info), thunk_info->i.srt_bitmap);
+    scavenge_srt((StgClosure **)GET_SRT(thunk_info), thunk_info->i.u.srt_bitmap);
 }
 
 STATIC_INLINE GNUC_ATTR_HOT void
@@ -357,7 +357,7 @@ scavenge_fun_srt(const StgInfoTable *info)
     if (!major_gc) return;
   
     fun_info = itbl_to_fun_itbl(info);
-    scavenge_srt((StgClosure **)GET_FUN_SRT(fun_info), fun_info->i.srt_bitmap);
+    scavenge_srt((StgClosure **)GET_FUN_SRT(fun_info), fun_info->i.u.srt_bitmap);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1856,7 +1856,7 @@ scavenge_stack(StgPtr p, StgPtr stack_end)
 
     follow_srt:
 	if (major_gc) 
-	    scavenge_srt((StgClosure **)GET_SRT(info), info->i.srt_bitmap);
+	    scavenge_srt((StgClosure **)GET_SRT(info), info->i.u.srt_bitmap);
 	continue;
 
     case RET_BCO: {

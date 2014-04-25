@@ -236,7 +236,7 @@ genMkPAP regstatus macro jump live ticker disamb
 --      if (arity == 1) {
 --          Sp[0] = Sp[1];
 --          Sp[1] = (W_)&stg_ap_1_info;
---          JMP_(GET_ENTRY(R1.cl));
+--          JMP_(StgInfoTable_entry(StgClosure_info(R1.cl)));
     smaller_arity_cases = vcat [ smaller_arity i | i <- [1..n_args-1] ]
 
     smaller_arity arity
@@ -352,7 +352,7 @@ genMkPAP regstatus macro jump live ticker disamb
 --
 --      if (arity == 1) {
 --          Sp++;
---          JMP_(GET_ENTRY(R1.cl));
+--          JMP_(StgInfoTable_entry(StgClosure_info(R1.cl)));
 
     exact_arity_case 
         = text "if (arity == " <> int n_args <> text ") {" $$
@@ -457,7 +457,7 @@ enterFastPathHelper tag regstatus no_load_regs args_in_regs args =
         reg_doc,
         text "  Sp_adj(" <> int sp' <> text ");",
         -- enter, but adjust offset with tag
-        text "  " <> mkJump regstatus (text "%GET_ENTRY(R1-" <> int tag <> text ")") ["R1"] args <> semi,
+        text "  " <> mkJump regstatus (text "StgInfoTable_entry(StgClosure_info(R1-" <> int tag <> text "))") ["R1"] args <> semi,
         text "}"
        ]
   -- I don't totally understand this code, I copied it from
@@ -482,7 +482,7 @@ tickForArity arity
     = vcat [
             text "W_[TOTAL_CALLS] = W_[TOTAL_CALLS] + 1;",
             text "W_[SLOW_CALLS_" <> int arity <> text "] = W_[SLOW_CALLS_" <> int arity <> text "] + 1;",
-            text "if (TO_W_(StgFunInfoExtra_arity(%FUN_INFO(%INFO_PTR(UNTAG(R1))))) == " <> int arity <> text " ) {",
+            text "if (TO_W_(StgFunInfoTable_arity(StgClosure_info(UNTAG(R1)))) == " <> int arity <> text " ) {",
             text "  W_[RIGHT_ARITY_" <> int arity <> text "] = W_[RIGHT_ARITY_" <> int arity <> text "] + 1;",
             text "  if (GETTAG(R1)==" <> int tag <> text ") {",
             text "    W_[TAGGED_PTR_" <> int arity <> text "] = W_[TAGGED_PTR_" <> int arity <> text "] + 1;",
@@ -581,12 +581,12 @@ genApply regstatus args =
 
        -- Functions can be tagged, so we untag them!
        text  "R1 = UNTAG(R1);",
-       text  "info = %INFO_PTR(R1);",
+       text  "info = StgClosure_info(R1);",
 
 --    if fast == 1:
 --        print "    goto *lbls[info->type];";
 --    else:
-        text "switch [INVALID_OBJECT .. N_CLOSURE_TYPES] (TO_W_(%INFO_TYPE(%STD_INFO(info)))) {",
+        text "switch [INVALID_OBJECT .. N_CLOSURE_TYPES] (TO_W_(StgInfoTable_type(info))) {",
         nest 4 (vcat [
 
 --    if fast == 1:
@@ -613,9 +613,9 @@ genApply regstatus args =
         text "     FUN_0_2,",
         text "     FUN_STATIC: {",
         nest 4 (vcat [
-          text "arity = TO_W_(StgFunInfoExtra_arity(%FUN_INFO(info)));",
+          text "arity = TO_W_(StgFunInfoTable_arity(info));",
           text "ASSERT(arity > 0);",
-          genMkPAP regstatus "BUILD_PAP" "%GET_ENTRY(UNTAG(R1))" ["R1"] "FUN" "FUN"
+          genMkPAP regstatus "BUILD_PAP" "StgInfoTable_entry(StgClosure_info(UNTAG(R1)))" ["R1"] "FUN" "FUN"
                 False{-reg apply-} False{-args on stack-} False{-not a PAP-}
                 args all_args_size fun_info_label {- tag stmt -}True
          ]),
@@ -659,7 +659,7 @@ genApply regstatus args =
           -- overwritten by an indirection, so we must enter the original
           -- info pointer we read, don't read it again, because it might
           -- not be enterable any more.
-          text "jump_SAVE_CCCS(%ENTRY_CODE(info));",
+          text "jump_SAVE_CCCS(StgInfoTable_entry(info));",
             -- see Note [jump_SAVE_CCCS]
           text ""
          ]),
@@ -717,8 +717,8 @@ genApplyFast regstatus args =
 
         -- Functions can be tagged, so we untag them!
         text  "R1 = UNTAG(R1);",
-        text  "info = %GET_STD_INFO(R1);",
-        text "switch [INVALID_OBJECT .. N_CLOSURE_TYPES] (TO_W_(%INFO_TYPE(info))) {",
+        text  "info = StgClosure_info(R1);",
+        text "switch [INVALID_OBJECT .. N_CLOSURE_TYPES] (TO_W_(StgInfoTable_type(info))) {",
         nest 4 (vcat [
           text "case FUN,",
           text "     FUN_1_0,",
@@ -728,9 +728,9 @@ genApplyFast regstatus args =
           text "     FUN_0_2,",
           text "     FUN_STATIC: {",
           nest 4 (vcat [
-            text "arity = TO_W_(StgFunInfoExtra_arity(%GET_FUN_INFO(R1)));",
+            text "arity = TO_W_(StgFunInfoTable_arity(StgClosure_info(R1)));",
             text "ASSERT(arity > 0);",
-            genMkPAP regstatus "BUILD_PAP" "%GET_ENTRY(UNTAG(R1))" ["R1"] "FUN" "FUN"
+            genMkPAP regstatus "BUILD_PAP" "StgInfoTable_entry(StgClosure_info(UNTAG(R1)))" ["R1"] "FUN" "FUN"
                 False{-reg apply-} True{-args in regs-} False{-not a PAP-}
                 args all_args_size fun_info_label {- tag stmt -}True
            ]),
@@ -783,7 +783,7 @@ genStackApply regstatus args =
    (assign_regs, sp') = loadRegArgs regstatus 0 args
    body = vcat [assign_regs,
                 text "Sp_adj" <> parens (int sp') <> semi,
-                mkJump regstatus (text "%GET_ENTRY(UNTAG(R1))") ["R1"] args <> semi
+                mkJump regstatus (text "StgInfoTable_entry(StgClosure_info(UNTAG(R1)))") ["R1"] args <> semi
                 ]
 
 -- -----------------------------------------------------------------------------

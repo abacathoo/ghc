@@ -32,7 +32,6 @@ import MkGraph
 import CoreSyn          ( AltCon(..) )
 import SMRep
 import Cmm
-import CmmInfo
 import CmmUtils
 import CLabel
 import StgSyn
@@ -679,9 +678,8 @@ pushUpdateFrame lbl updatee body
 
 emitUpdateFrame :: DynFlags -> CmmExpr -> CLabel -> CmmExpr -> FCode ()
 emitUpdateFrame dflags frame lbl updatee = do
-  let off_updatee = oFFSET_StgUpdateFrame_updatee dflags
   emitStore frame (mkLblExpr lbl)
-  emitStore (cmmOffset dflags frame off_updatee) updatee
+  emit $ sTORE_StgUpdateFrame_updatee dflags frame updatee
   initUpdFrameProf frame
 
 -----------------------------------------------------------------------------
@@ -708,7 +706,8 @@ link_caf node _is_upd = do
 
   -- see Note [atomic CAF entry] in rts/sm/Storage.c
   ; updfr  <- getUpdFrameOff
-  ; let target = entryCode dflags (closureInfoPtr dflags (CmmReg (CmmLocal node)))
+  ; let target = lOAD_StgInfoTable_entry dflags
+                    $ lOAD_StgClosure_info dflags $ CmmReg $ CmmLocal node
   ; emit =<< mkCmmIfThen
       (cmmEqWord dflags (CmmReg (CmmLocal bh)) (zeroExpr dflags))
         -- re-enter the CAF

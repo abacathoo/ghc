@@ -47,7 +47,7 @@
     OVERWRITING_CLOSURE(p1);                                    \
     StgInd_indirectee(p1) = p2;                                 \
     prim_write_barrier;                                         \
-    SET_INFO(p1, stg_BLACKHOLE_info);                           \
+    StgClosure_info(p1) = stg_BLACKHOLE_info;			\
     LDV_RECORD_CREATE(p1);                                      \
     bd = Bdescr(p1);						\
     if (bdescr_gen_no(bd) != 0 :: bits16) {			\

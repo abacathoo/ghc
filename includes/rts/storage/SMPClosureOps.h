@@ -16,17 +16,17 @@
 #if defined(THREADED_RTS)
 #define LOCK_CLOSURE(closure, info)                             \
     if (CInt[n_capabilities] == 1 :: CInt) {                    \
-        info = GET_INFO(closure);                               \
+        info = StgClosure_info(closure);                               \
     } else {                                                    \
         ("ptr" info) = ccall reallyLockClosure(closure "ptr");  \
     }
 #else
-#define LOCK_CLOSURE(closure, info) info = GET_INFO(closure)
+#define LOCK_CLOSURE(closure, info) info = StgClosure_info(closure)
 #endif
 
 #define unlockClosure(ptr,info)                 \
     prim_write_barrier;                         \
-    StgHeader_info(ptr) = info;
+    StgClosure_info(ptr) = info;
 
 #else
 

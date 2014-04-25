@@ -35,7 +35,6 @@ import MkGraph
 import SMRep
 import Cmm
 import CmmUtils
-import CmmInfo
 import CLabel
 import StgSyn
 import Id
@@ -73,7 +72,8 @@ emitReturn results
            Return _ ->
              do { adjustHpBackwards
                 ; let e = CmmLoad (CmmStackSlot Old updfr_off) (gcWord dflags)
-                ; emit (mkReturn dflags (entryCode dflags e) results updfr_off)
+                ; emit (mkReturn dflags (lOAD_StgInfoTable_entry dflags e)
+                                        results updfr_off)
                 }
            AssignTo regs adjust ->
              do { when adjust adjustHpBackwards
@@ -194,7 +194,7 @@ slowCall fun stg_args
            then do
              funv <- (CmmReg . CmmLocal) `fmap` assignTemp fun
              fun_iptr <- (CmmReg . CmmLocal) `fmap`
-                    assignTemp (closureInfoPtr dflags (cmmUntag dflags funv))
+               assignTemp (lOAD_StgClosure_info dflags (cmmUntag dflags funv))
 
              -- ToDo: we could do slightly better here by reusing the
              -- continuation from the slow call, which we have in r.
@@ -207,7 +207,7 @@ slowCall fun stg_args
 
              fast_code <- getCode $
                 emitCall (NativeNodeCall, NativeReturn)
-                  (entryCode dflags fun_iptr)
+                  (lOAD_StgInfoTable_entry dflags fun_iptr)
                   (nonVArgs ((P,Just funv):argsreps))
 
              slow_lbl <- newLabelC
@@ -215,8 +215,9 @@ slowCall fun stg_args
              is_tagged_lbl <- newLabelC
              end_lbl <- newLabelC
 
-             let correct_arity = cmmEqWord dflags (funInfoArity dflags fun_iptr)
-                                                  (mkIntExpr dflags n_args)
+             let correct_arity = cmmEqWord dflags
+                  (lOAD_StgFunInfoTable_arity dflags fun_iptr)
+                  (mkIntExpr dflags n_args)
 
              emit (mkCbranch (cmmIsTagged dflags funv) is_tagged_lbl slow_lbl
                    <*> mkLabel is_tagged_lbl

@@ -212,7 +212,7 @@ ppcNcgImpl dflags
        ,ncg_x86fp_kludge          = id
        ,ncgAllocMoreStack         = PPC.Instr.allocMoreStack platform
        ,ncgExpandTop              = id
-       ,ncgMakeFarBranches        = PPC.Instr.makeFarBranches
+       ,ncgMakeFarBranches        = PPC.Instr.makeFarBranches dflags
    }
     where platform = targetPlatform dflags
 

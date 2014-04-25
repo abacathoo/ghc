@@ -22,7 +22,7 @@ import StgCmmMonad
 import StgCmmUtils
 import StgCmmTicky
 import StgCmmHeap
-import StgCmmProf ( costCentreFrom, curCCS )
+import StgCmmProf ( curCCS )
 
 import DynFlags
 import Platform
@@ -30,7 +30,6 @@ import BasicTypes
 import MkGraph
 import StgSyn
 import Cmm
-import CmmInfo
 import Type     ( Type, tyConAppTyCon )
 import TyCon
 import CLabel
@@ -331,14 +330,15 @@ emitPrimOp dflags [res] GetCCSOfOp [arg]
   = emitAssign (CmmLocal res) val
   where
     val
-     | gopt Opt_SccProfilingOn dflags = costCentreFrom dflags (cmmUntag dflags arg)
+     | gopt Opt_SccProfilingOn dflags =
+        lOAD_StgClosure_ccs dflags (cmmUntag dflags arg)
      | otherwise                      = CmmLit (zeroCLit dflags)
 
 emitPrimOp _ [res] GetCurrentCCSOp [_dummy_arg]
    = emitAssign (CmmLocal res) curCCS
 
 emitPrimOp dflags [res] ReadMutVarOp [mutv]
-   = emitAssign (CmmLocal res) (cmmLoadIndexW dflags mutv (sIZEOFW_StgHeader dflags) (gcWord dflags))
+   = emitAssign (CmmLocal res) (cmmLoadOffsetW dflags mutv (sIZEOFW_StgHeader dflags) (gcWord dflags))
 
 emitPrimOp dflags [] WriteMutVarOp [mutv,var]
    = do emitStore (cmmOffsetW dflags mutv (sIZEOFW_StgHeader dflags)) var
@@ -350,7 +350,7 @@ emitPrimOp dflags [] WriteMutVarOp [mutv,var]
 --  #define sizzeofByteArrayzh(r,a) \
 --     r = ((StgArrWords *)(a))->bytes
 emitPrimOp dflags [res] SizeofByteArrayOp [arg]
-   = emit $ mkAssign (CmmLocal res) (cmmLoadIndexW dflags arg (sIZEOFW_StgHeader dflags) (bWord dflags))
+   = emit $ mkAssign (CmmLocal res) (cmmLoadOffsetW dflags arg (sIZEOFW_StgHeader dflags) (bWord dflags))
 
 --  #define sizzeofMutableByteArrayzh(r,a) \
 --      r = ((StgArrWords *)(a))->bytes
@@ -368,14 +368,14 @@ emitPrimOp dflags [res] ByteArrayContents_Char [arg]
 
 --  #define stableNameToIntzh(r,s)   (r = ((StgStableName *)s)->sn)
 emitPrimOp dflags [res] StableNameToIntOp [arg]
-   = emitAssign (CmmLocal res) (cmmLoadIndexW dflags arg (sIZEOFW_StgHeader dflags) (bWord dflags))
+   = emitAssign (CmmLocal res) (cmmLoadOffsetW dflags arg (sIZEOFW_StgHeader dflags) (bWord dflags))
 
 --  #define eqStableNamezh(r,sn1,sn2)                                   \
 --    (r = (((StgStableName *)sn1)->sn == ((StgStableName *)sn2)->sn))
 emitPrimOp dflags [res] EqStableNameOp [arg1,arg2]
    = emitAssign (CmmLocal res) (CmmMachOp (mo_wordEq dflags) [
-                                   cmmLoadIndexW dflags arg1 (sIZEOFW_StgHeader dflags) (bWord dflags),
-                                   cmmLoadIndexW dflags arg2 (sIZEOFW_StgHeader dflags) (bWord dflags)
+                                   cmmLoadOffsetW dflags arg1 (sIZEOFW_StgHeader dflags) (bWord dflags),
+                                   cmmLoadOffsetW dflags arg2 (sIZEOFW_StgHeader dflags) (bWord dflags)
                          ])
 
 
@@ -389,7 +389,9 @@ emitPrimOp _      [res] AddrToAnyOp [arg]
 --  #define dataToTagzh(r,a)  r=(GET_TAG(((StgClosure *)a)->header.info))
 --  Note: argument may be tagged!
 emitPrimOp dflags [res] DataToTagOp [arg]
-   = emitAssign (CmmLocal res) (getConstrTag dflags (cmmUntag dflags arg))
+   = emitAssign (CmmLocal res) $ lOAD_StgInfoTable_constr_tag dflags
+                               $ lOAD_StgClosure_info dflags
+                               $ cmmUntag dflags arg
 
 {- Freezing arrays-of-ptrs requires changing an info table, for the
    benefit of the generational collector.  It needs to scavenge mutable
@@ -442,8 +444,7 @@ emitPrimOp _      []  WriteSmallArrayOp [obj,ix,v] = doWriteSmallPtrArrayOp obj 
 -- Getting the size of pointer arrays
 
 emitPrimOp dflags [res] SizeofArrayOp [arg]
-   = emit $ mkAssign (CmmLocal res) (cmmLoadIndexB dflags arg (oFFSET_StgMutArrPtrs_ptrs dflags) (bWord dflags)) -- XXX: This was cmmLoadIndexW, (which was a bug, it only worked because theoFFSET happened to be 0)
-
+   = emit $ mkAssign (CmmLocal res) $ lOAD_StgMutArrPtrs_ptrs dflags arg
 emitPrimOp dflags [res] SizeofMutableArrayOp [arg]
    = emitPrimOp dflags [res] SizeofArrayOp [arg]
 emitPrimOp dflags [res] SizeofArrayArrayOp [arg]
@@ -452,9 +453,7 @@ emitPrimOp dflags [res] SizeofMutableArrayArrayOp [arg]
    = emitPrimOp dflags [res] SizeofArrayOp [arg]
 
 emitPrimOp dflags [res] SizeofSmallArrayOp [arg] =
-    emit $ mkAssign (CmmLocal res)
-    (cmmLoadIndexW dflags arg
-     (fixedHdrSizeW dflags + oFFSET_StgSmallMutArrPtrs_ptrs dflags) (bWord dflags))
+    emit $ mkAssign (CmmLocal res) $ lOAD_StgSmallMutArrPtrs_ptrs dflags arg
 emitPrimOp dflags [res] SizeofSmallMutableArrayOp [arg] =
     emitPrimOp dflags [res] SizeofSmallArrayOp [arg]
 
@@ -1248,14 +1247,10 @@ doWritePtrArrayOp addr idx val
        emit $ mkStore (
          cmmOffsetExpr dflags
           (cmmOffsetExprW dflags (cmmOffsetB dflags addr (sIZEOF_StgMutArrPtrs dflags))
-                         (loadArrPtrsSize dflags addr))
+                         (lOAD_StgMutArrPtrs_ptrs dflags addr))
           (CmmMachOp (mo_wordUShr dflags) [idx,
                                            mkIntExpr dflags (mUT_ARR_PTRS_CARD_BITS dflags)])
          ) (CmmLit (CmmInt 1 W8))
-
-loadArrPtrsSize :: DynFlags -> CmmExpr -> CmmExpr
-loadArrPtrsSize dflags addr = CmmLoad (cmmOffsetB dflags addr off) (bWord dflags)
- where off = oFFSET_StgMutArrPtrs_ptrs dflags
 
 mkBasicIndexedRead :: ByteOff      -- Initial offset in bytes
                    -> Maybe MachOp -- Optional result cast
@@ -1750,7 +1745,7 @@ emitCopyArray copy src0 src_off dst0 dst_off0 n = do
 
         -- The base address of the destination card table
         dst_cards_p <- assignTempE $ cmmOffsetExprW dflags dst_elems_p
-                       (loadArrPtrsSize dflags dst)
+                                   $ lOAD_StgMutArrPtrs_ptrs dflags dst
 
         emitSetCards dst_off dst_cards_p n
 

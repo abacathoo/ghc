@@ -226,12 +226,9 @@ typedef struct StgInfoTable_ {
     StgClosureInfo  layout;	/* closure layout info (one word) */
 
     StgHalfWord     type;	/* closure type */
-    StgHalfWord     srt_bitmap;
-       /* In a CONSTR:
-            - the constructor tag
-          In a FUN/THUNK
-            - a bitmap of SRT entries
-       */
+    union {StgHalfWord srt_bitmap; /* a bitmap of SRT entries (in a FUN/THUNK) */
+	   StgHalfWord constr_tag; /* the constructor tag (in a CONSTR) */
+    } u;
 
 #ifdef TABLES_NEXT_TO_CODE
     StgCode         code[FLEXIBLE_ARRAY];

@@ -32,7 +32,6 @@ import CodeGen.Platform
 import BlockId
 import DynFlags
 import Cmm
-import CmmInfo
 import FastString
 import CLabel
 import Outputable
@@ -562,10 +561,11 @@ ppc_takeRegRegMoveInstr _  = Nothing
 -- big, we have to work around this limitation.
 
 makeFarBranches
-        :: BlockEnv CmmStatics
+        :: DynFlags
+        -> BlockEnv CmmStatics
         -> [NatBasicBlock Instr]
         -> [NatBasicBlock Instr]
-makeFarBranches info_env blocks
+makeFarBranches dflags info_env blocks
     | last blockAddresses < nearLimit = blocks
     | otherwise = zipWith handleBlock blockAddresses blocks
     where
@@ -589,5 +589,5 @@ makeFarBranches info_env blocks
         -- multiple instructions, and it's just not worth the effort
         -- to calculate things exactly
         nearLimit = 7000 - mapSize info_env * maxRetInfoTableSizeW
-
+        maxRetInfoTableSizeW = sIZEOF_StgRetInfoTable dflags `div` wORD_SIZE dflags
         blockAddressMap = listToUFM $ zip (map blockId blocks) blockAddresses
