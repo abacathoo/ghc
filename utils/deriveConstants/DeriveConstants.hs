@@ -628,12 +628,20 @@ data Dependant f = Rep  (f CExpr   Integer) -- note [GetRep]
                  | Nat  (f CExpr   Integer)
                  | Bool (f CPPExpr Bool   )
 
-showType :: Dependant a -> String
+showType,showEmpty :: Dependant a -> String
 showType Rep{}  = "Int"
 showType Word{} = "Int"
 showType Int{}  = "Int"
 showType Nat{}  = "Integer"
 showType Bool{} = "Bool"
+
+--showEmpty, for initializing an empty PlatformConstants type
+showEmpty Rep{}  = "0"
+showEmpty Word{} = "0"
+showEmpty Int{}  = "0"
+showEmpty Nat{}  = "0"
+showEmpty Bool{} = "False"
+
 
 -- [GetRep]
 -- GetRep is for defining REP_x to be b32 etc
@@ -845,21 +853,27 @@ filterWanteds ws t = [Constant n ts x | Constant n ts x <- ws, t `elem` ts]
 writeHaskellType :: IO ()
 writeHaskellType = do
  outFile <- requireOption "no output file" o_outputFile
- groups <- mapM doGroup template
+ groupType <- mapM (doGroup ((" :: " ++) . showType)) template
+ groupEmpty <- mapM (doGroup ((" = " ++) . showEmpty)) template
  writeFile outFile $ unlines
   ["data PlatformConstants = PlatformConstants {"
-  ,unlines $ indent 2 $ commas $ concat $ groups
+  ,unlines $ indent 2 $ commas $ concat $ groupType
   ,"} deriving Read"
+  ,""
+  ,"emptyPlatformConstants :: PlatformConstants"
+  ,"emptyPlatformConstants = PlatformConstants {"
+  ,unlines $ indent 2 $ commas $ concat $ groupEmpty
+  ,"}"
   ]
  where
-  doGroup (Group ws conditional) =
+  doGroup f (Group ws conditional) =
    doConditional conditional startState{cs_derive = derive}
    where
     derive defines = return $ concatMap doWanted $ filterWanteds ws Haskell
      where
-      doWanted (Constant _n _t (Independant _i)) = []
+      doWanted (Constant _n _t (Independant _i))   = []
       doWanted (Constant name _t (Dependant expr)) =
-       ["pc" ++ concatMap show defines ++ "_" ++ name ++ " :: " ++ showType expr]
+       ["pc" ++ concatMap show defines ++ "_" ++ name ++ f expr]
 
 writeHaskellWrappers :: (Wanted -> Bool) -> IO ()
 writeHaskellWrappers p = do

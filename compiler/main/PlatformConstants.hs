@@ -6,7 +6,6 @@
 --
 -------------------------------------------------------------------------------
 
-module PlatformConstants (PlatformConstants(..)) where
+module PlatformConstants (PlatformConstants(..),emptyPlatformConstants) where
 
 #include "../includes/dist-derivedconstants/header/GHCConstantsHaskellType.hs"
-
