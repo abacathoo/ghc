@@ -536,7 +536,7 @@ wanteds_p = concat
   ,lit [Cmm] "StgFunInfoTable_slow_apply"
     ["#define StgFunInfoTable_slow_apply(ptr) \\"
     ," (TO_W_(StgFunInfoTable_slow_apply_offset(ptr)) + StgInfoTable_entry(ptr))"
-
+    ]
   ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.fun_type"
   ,offset [bro "i.code",br,bm] "StgFunInfoTable" "f.arity"
   ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.b.bitmap"
@@ -562,10 +562,10 @@ wanteds_profOnly = concat
 -- End of wanteds definitions              --
 -- Start of DeriveConstants Implementation --
 ---------------------------------------------
-bro,hro,cro              :: String -> String -> String -> String -> Wanted
-bo,ho,co,br,hr,cr,bm,hm,cm,cmp,crg :: String -> String -> String -> Wanted
+bro,hro,cro           :: String -> String -> String -> String -> Wanted
+bo,co,br,hr,cr,bm,hm,cm,cmp,crg :: String -> String -> String -> Wanted
 bo  = mkOffset_       both
-ho  = mkOffset_       [Haskell]
+--ho  = mkOffset_       [Haskell]
 co  = mkOffset_       [Cmm]
 bro = mkRelOffset_    both
 hro = mkRelOffset_    [Haskell]
@@ -788,14 +788,14 @@ getResults ds wanteds = do
         case break (' ' ==) xs1 of
           (x2, ' ' : x3) ->
             case readHex x1 of
-              [(size, "")] ->
+              [(size_got, "")] ->
                 case x2 of
                   "C" ->
                     let x3' = case x3 of
                           '_' : rest -> rest
                           _          -> x3
                     in case stripPrefix prefix x3' of
-                      Just name -> Just (name, size)
+                      Just name -> Just (name, size_got)
                       _ -> Nothing
                   _ -> Nothing
               _ -> Nothing
@@ -1088,7 +1088,7 @@ deleteDots :: String -> String
 deleteDots = reverse . f . reverse
  where
   f [] = []
-  f ('.':xs) = []
+  f ('.':_) = []
   f (x:xs) = x : f xs
 
 haskellise :: String -> String
