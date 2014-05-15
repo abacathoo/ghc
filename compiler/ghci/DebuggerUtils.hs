@@ -104,7 +104,7 @@ dataConInfoPtrToName x = do
                          w -> panic ("getConDescAddress: Unknown platformWordSize: " ++ show w)
        return $ (ptr `plusPtr` sIZEOF_StgInfoTable dflags) `plusPtr` offsetToString
     | otherwise =
-       peek $ intPtrToPtr $ ptrToIntPtr ptr + fromIntegral (sIZEOF_StgInfoTable dflags)
+       peek $ intPtrToPtr $ ptrToIntPtr ptr + fromIntegral (sIZEOF_StgInfoTable dflags - wORD_SIZE dflags)
    -- parsing names is a little bit fiddly because we have a string in the form: 
    -- pkg:A.B.C.foo, and we want to split it into three parts: ("pkg", "A.B.C", "foo").
    -- Thus we split at the leftmost colon and the rightmost occurrence of the dot.

@@ -176,16 +176,16 @@ $(includes_GHCCONSTANTS_HASKELL_VALUE): $(deriveConstants_INPLACE) | $$(dir $$@)
 	$< --gen-haskell-value -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
 
 $(includes_GHCCONSTANTS_HASKELL_DFLAGS_WRAPPERS): $(deriveConstants_INPLACE) | $$(dir $$@)/.
-	$< --gen-haskell-dflags-wrappers -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
+	$< --gen-haskell-wrappers -o $@ --dflags --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
 
 $(includes_GHCCONSTANTS_HASKELL_DFLAGS_EXPORTS): $(deriveConstants_INPLACE) | $$(dir $$@)/.
-	$< --gen-haskell-dflags-exports -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
+	$< --gen-haskell-exports -o $@ --dflags --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
 
 $(includes_GHCCONSTANTS_HASKELL_CODEGEN_WRAPPERS): $(deriveConstants_INPLACE) | $$(dir $$@)/.
-	$< --gen-haskell-codegen-wrappers -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
+	$< --gen-haskell-wrappers --codegen -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
 
 $(includes_GHCCONSTANTS_HASKELL_CODEGEN_EXPORTS): $(deriveConstants_INPLACE) | $$(dir $$@)/.
-	$< --gen-haskell-codegen-exports -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
+	$< --gen-haskell-exports --codegen -o $@ --tmpdir $(dir $@) $(DERIVE_CONSTANTS_FLAGS)
 
 includes_GHCCONSTANTS_HASKELL_DFLAGS += $(includes_GHCCONSTANTS_HASKELL_DFLAGS_EXPORTS)
 includes_GHCCONSTANTS_HASKELL_DFLAGS += $(includes_GHCCONSTANTS_HASKELL_DFLAGS_WRAPPERS)

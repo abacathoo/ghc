@@ -1,5 +1,3 @@
-#include "ghcautoconf.h"
-
 {- -----------------------------------------------------------------------------
 
 (c) The GHC Team, 1992-2012
@@ -9,12 +7,13 @@ DeriveConstants is a program that extracts constants from the C
 declarations in the header files (primarily struct sizes and field offsets)
 and makes these constants availiable to Haskell and Cmm files.
 
-Many struct sizes and field offsets depend on wheather PROFILING is on.
-Therefore DeriveConstants generates two sets of constants, one with
-PROFILING on, and one with PROFILING off.
+Many struct sizes and field offsets depend on the CPP defines PROFILING
+and TABLES_NEXT_TO_CODE. Therefore, DerivedConstants generates 4 sets of
+constants, with the following set of CPP defines:
+[] [Profiling] [TablesNextToCode] [Profiling,TablesNextToCode]
 
-To add a new derived constant:                            go to [Add constant]
-To add sensitivity to a new 'way' e.g. DEBUG/TICKY_TICKY: go to [Add sensitivity]
+To add a new derived constant:                     go to [Add constant]
+To add sensitivity to a new CPP define e.g. DEBUG: go to [Add sensitivity]
 ------------------------------------------------------------------------------ -}
 
 import Control.Monad
@@ -22,6 +21,8 @@ import Data.Bits
 import Data.Char
 import Data.List
 import Data.Map (Map)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Data.Maybe
 import Numeric
@@ -37,11 +38,16 @@ import System.Process
 -- [Add constant] --
 --------------------
 
- 1. Is your new constant is sensitive to PROFILING?
-    In other words, would the value of your constant be different if
-    PROFILING was on or off?
-      - If Yes: Add your constant to the wanteds_p list (p for profiling)
-      - If No : Add your constant to the wanteds_i list (i for insensitive)
+ 1. Is your new constant is sensitive to either of the CPP defines
+    PROFILING or TABLES_NEXT_TO_CODE?
+    Add your constant below the appropriate line:
+      [Sensitive to []]
+      [Sensitive to [Profiling]]
+      [Sensitive to [Profiling,TablesNextToCode]]
+
+    If you are unsure, add your constant below the [Sensitive to []] line.
+    The sanityCheck ([Note sanityCheck]) function will error at runtime if
+    you were wrong.
 
  2. What sort of constant would you like to generate?
       - size [Cmm] "StgClosure"
@@ -76,16 +82,16 @@ import System.Process
 
         This table is not quite complete, there are some other lesser
         used offset functions, such as bro, cro, and hro for generating
-        relative offsets. See [Relative offsets]
+        relative offsets. See [Note Relative offsets]
 
 -}
 
-wanteds_i, wanteds_p, wanteds_profOnly :: [Wanted]
-
---------------------------------------------------------------
--- wanteds_i : These constants are insensitive to profiling --
---------------------------------------------------------------
-wanteds_i = concat
+constants :: [Constant]
+constants =
+  -----------------------
+  -- [Sensitive to []] --
+  -----------------------
+  map (mkSensitiveTo []) (concat
   [[mkWord both  "BLOCK_SIZE"         "BLOCK_SIZE"]
    -- Size of a storage manager block (in bytes).
   ,[mkWord [Cmm] "MBLOCK_SIZE"        "MBLOCK_SIZE"]
@@ -93,20 +99,20 @@ wanteds_i = concat
   ,[mkWord both  "BLOCKS_PER_MBLOCK" "BLOCKS_PER_MBLOCK"]
 
    ---------------------------------------------------------------------
-   -- [Relative offsets]                                              --
+   -- [Note Relative offsets]                                         --
    -- Sometimes struct fields are not accessed from the start of the  --
    -- struct                                                          --
    --                                                                 --
    -- Consider:                                                       --
    -- typedef struct Capability_ {                                    --
    --   StgFunTable f;                                                --
-   --   StgRegTable r                                                 --
+   --   StgRegTable r;                                                --
    --   ...                                                           --
    -- } Capability                                                    --
    --                                                                 --
-   -- The stg register BaseReg points to Capability.r                 --
-   -- BaseReg is also used to access fields in Capability.f,          --
-   -- using a relative offset from Capability.r                       --
+   -- The stg register BaseReg points to cap.r (where cap is some Capability)
+   -- BaseReg is also used to access fields in cap.f using a relative offset
+   -- from cap.r                                                      --
    --                                                                 --
    --               Capability                                        --
    -- StgFunTable  +-------------------------+                        --
@@ -314,22 +320,29 @@ wanteds_i = concat
   ,[mkNat  [Haskell] "ILDV_CREATE_MASK"  "LDV_CREATE_MASK"]
   ,[mkNat  [Haskell] "ILDV_STATE_CREATE" "LDV_STATE_CREATE"]
   ,[mkNat  [Haskell] "ILDV_STATE_USE"    "LDV_STATE_USE"]
-  ]
+  ])
+  ------------------------------
+  -- Sensitive to [Profiling] --
+  ------------------------------
+  ++ map (mkSensitiveTo [Profiling]) (concat
+  [sizeW    [Haskell]  "StgHeader"
+  ,size     both       "StgHeader"
 
-------------------------------------------------------------
--- wanteds_p : These constants are sensitive to profiling --
-------------------------------------------------------------
-wanteds_p = concat
-  [sizeW  [Haskell]  "StgHeader"
-  ,size   both       "StgHeader"
-  ,sizeW  [Haskell]  "StgThunkHeader"
-  ,size   both       "StgThunkHeader"
+  ,whenDef Profiling $
+    sizeW   both       "StgProfHeader"
 
-  ,sizeW  [Haskell]  "StgClosure"
-  ,offset [bo,br,bm] "StgClosure"         "header.info"
+  ,sizeW    [Haskell]  "StgThunkHeader"
+  ,size     both       "StgThunkHeader"
 
-  ,offset [co,cmp]   "StgClosure"         "payload"
-  ,offset [co,cmp]   "StgThunk"           "payload"
+  ,sizeW    [Haskell]  "StgClosure"
+  ,offset   [bo,br,bm] "StgClosure"     "header.info"
+  ,offset   [co,cmp]   "StgClosure"     "payload"
+  ,whenDef Profiling $ concat
+    [offset [bo,br,bm] "StgClosure"     "header.prof.ccs"
+    ,offset [bo,br,bm] "StgClosure"     "header.prof.hp.ldvw"
+    ]
+
+  ,offset [co,cmp]   "StgThunk"       "payload"
 
   ,size   both    "StgUpdateFrame"
   ,size   [Cmm]   "StgCatchFrame"
@@ -363,8 +376,13 @@ wanteds_p = concat
   ,offset  [co,cr,cm] "StgTSO" "dirty"
   ,offset  [co,cr,cm] "StgTSO" "bq"
   ,offset  [bo,br,bm] "StgTSO" "alloc_limit"
-  --For               "StgTSO" "cccs" see [PROFILING only]
+  ,whenDef Profiling $ concat
+    [offset [bo,br,bm] "StgTSO" "header.prof.hp.ldvw"
+    ,offset [bo,br,bm] "StgTSO" "prof.cccs"]
   ,offset  [bo,br,bm] "StgTSO" "stackobj"
+
+  ,whenDef Profiling $
+    size   [Cmm]      "StgTSOProfInfo"
 
   ,offset [bo,br,bm] "StgStack"    "sp"
   ,offset [bo]       "StgStack"    "stack"
@@ -473,83 +491,50 @@ wanteds_p = concat
   ,offset [co,cr,cm] "MessageBlackHole" "link"
   ,offset [co,cr,cm] "MessageBlackHole" "tso"
   ,offset [co,cr,cm] "MessageBlackHole" "bh"
+  ])
 
-  ,size [Haskell] "StgRetInfoTable"
-
+  -----------------------------------------------
+  -- Sensitive to [Profiling,TablesNextToCode] --
+  -----------------------------------------------
+  ++ map (mkSensitiveTo [Profiling,TablesNextToCode]) (concat
+  [size [Haskell] "StgRetInfoTable"
   ,size   both    "StgInfoTable"
+  ,whenNotDef TablesNextToCode $
+    offset [bro "CODE_OR_ENTRY",br]    "StgInfoTable" "entry"
+  ,offset  [bro "CODE_OR_ENTRY",br,bm] "StgInfoTable" "layout.payload.ptrs"
+  ,offset  [bro "CODE_OR_ENTRY",br,bm] "StgInfoTable" "layout.payload.nptrs"
+  ,offset  [bro "CODE_OR_ENTRY",br,bm] "StgInfoTable" "type"
+  ,offset  [bro "CODE_OR_ENTRY",br,bm] "StgInfoTable" "u.constr_tag"
 
-#if defined(TABLES_NEXT_TO_CODE)
+  ,whenDef TablesNextToCode $
+    offset [cro "i.CODE_OR_ENTRY",cr,cm] "StgFunInfoTable" "f.slow_apply_offset"
+  ,whenNotDef TablesNextToCode $
+    offset [cro "i.CODE_OR_ENTRY",cr]    "StgFunInfoTable" "f.slow_apply"
+  ,offset  [cro "i.CODE_OR_ENTRY",cr,cm] "StgFunInfoTable" "f.fun_type"
+  ,offset  [bro "i.CODE_OR_ENTRY",br,bm] "StgFunInfoTable" "f.arity"
+  ,offset  [cro "i.CODE_OR_ENTRY",cr,cm] "StgFunInfoTable" "f.b.bitmap"
+  ])
+  -- Note [CODE_OR_ENTRY]
+  -- CODE_OR_ENTRY= code      if TABLES_NEXT_TO_CODE
+  --                entry     otherwise
 
--------------------------------------------------------------------------
--- When TABLES_NEXT_TO_CODE                                            --
---                                                                     --
--- StgClosure:                                                         --
--- +-------------+------------    ----+                                --
--- | header.info | payload            |                                --
--- +-------------+------------    ----+                                --
---      |                                                              --
---      |  + =======================+  |  |                            --
---      |  | i.layout.payload.ptrs  |  |  |                            --
---      |  +------------------------+  |  |                            --
---      |  | i.layout.payload.nptrs |  |  |                            --
---      |  +------------------------+  |  |                            --
---      |  | i.type                 |  |  |                            --
---      |  +------------------------+  |  |                            --
---      |  | i.u.constr_tag         |  |  |                            --
---      +->+------------------------+  |  |                            --
---         | i.code                 |  |  |                            --
---                                     |  |                            --
---                                  <--+  |                            --
---                                        |                            --
---                                  <-----+                            --
---                                                                     --
---         |                        |                                  --
---         +------------------------+                                  --
--------------------------------------------------------------------------
-
-  ,lit [Cmm]     "StgInfoTable_entry" [def "StgInfoTable_entry(ptr)" "(ptr)"]
+     ++ map (mkSensitiveTo []) (concat
+  [lit [Cmm] "StgFunInfoTable_slow_apply"
+    ["#ifdef TABLES_NEXT_TO_CODE"
+    ,def "StgInfoTable_entry(ptr)" "(ptr)"
+    ,def "StgFunInfoTable_slow_apply(ptr)"
+      "(TO_W_(StgFunInfoTable_slow_apply_offset(ptr)) + StgInfoTable_entry(ptr))"
+    ,"#else"
+    ,mkMacro "StgInfoTable_entry"
+    ,mkMacro "StgFunInfoTable_slow_apply"
+    ,"#endif"
+    ]
   ,lit [Haskell] "lOAD_StgInfoTable_entry"
-    ["lOAD_StgInfoTable_entry :: DynFlags -> CmmExpr -> CmmExpr"
-    ,"lOAD_StgInfoTable_entry _dflags ptr = ptr"]
-
-  ,offset [bro "code",br,cm] "StgInfoTable" "layout.payload.ptrs"
-  ,offset [bro "code",br,cm] "StgInfoTable" "layout.payload.nptrs"
-  ,offset [bro "code",br,cm] "StgInfoTable" "type"
-  ,offset [hro "code",hr,hm] "StgInfoTable" "u.constr_tag"
-
-#else
-
--------------------------------------------------------------------------
--- When !TABLES_NEXT_TO_CODE                                           --
---                                                                     --
--- StgClosure:                                                         --
--- +-------------+------------    ----+                                --
--- | header.info | payload            |                                --
--- +-------------+------------    ----+                                --
---      |                                                              --
---      |  StgInfoTable                                                --
---      +->+------------------------+                                  --
---         | entry                  |-----> +---------+                --
---         +------------------------+       |  code   |                --
---         | layout.payload.ptrs    |                                  --
---         +------------------------+                                  --
---         | layout.payload.nptrs   |                                  --
---         +------------------------+       |         |                --
---         | type                   |       +---------+                --
---         +------------------------+                                  --
---         | u.constr_tag           |                                  --
---         +------------------------+                                  --
--------------------------------------------------------------------------
-
-  ,offset [bo,br,bm] "StgInfoTable" "entry"
-  ,offset [bo,br,cm] "StgInfoTable" "layout.payload.ptrs"
-  ,offset [bo,br,cm] "StgInfoTable" "layout.payload.nptrs"
-  ,offset [bo,br,cm] "StgInfoTable" "type"
-  ,offset [ho,hr,hm] "StgInfoTable" "u.constr_tag"
-#endif
-
-#if defined(TABLES_NEXT_TO_CODE)
-
+     ["lOAD_StgInfoTable_entry :: DynFlags -> CmmExpr -> CmmExpr"
+     ,"lOAD_StgInfoTable_entry dflags ptr"
+     ,"  | tablesNextToCode dflags = ptr"
+     ,"  | otherwise = " ++ mkLoad "StgInfoTable_entry"
+     ]
 -------------------------------------------------------------------------
 -- When TABLES_NEXT_TO_CODE                                            --
 --                                                                     --
@@ -586,16 +571,6 @@ wanteds_p = concat
 --         +------------------------+                                  --
 -------------------------------------------------------------------------
 
-  ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.slow_apply_offset"
-  ,lit [Cmm] "StgFunInfoTable_slow_apply"
-    ["#define StgFunInfoTable_slow_apply(ptr) \\"
-    ," (TO_W_(StgFunInfoTable_slow_apply_offset(ptr)) + StgInfoTable_entry(ptr))"
-    ]
-  ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.fun_type"
-  ,offset [bro "i.code",br,bm] "StgFunInfoTable" "f.arity"
-  ,offset [cro "i.code",cr,cm] "StgFunInfoTable" "f.b.bitmap"
-#else
-
 -------------------------------------------------------------------------
 -- When !TABLES_NEXT_TO_CODE                                           --
 --                                                                     --
@@ -628,117 +603,83 @@ wanteds_p = concat
 --         +------------------------+                                  --
 -------------------------------------------------------------------------
 
+  ])
+  where
+    whenDef d = map (\c -> c{cErrorWhen=f (not . (Set.member d))})
+    whenNotDef d = map (\c -> c{cErrorWhen=f (Set.member d)})
+    f p = [set|set<-subSets allDefines, p set]
+    mkSensitiveTo ds c = c{cSensitiveTo = Set.fromList ds}
+    both = [Haskell, Cmm]
+    bo  = mkOffset_       both
+--  ho  = mkOffset_       [Haskell] --Not currently used. Uncomment if needed
+    co  = mkOffset_       [Cmm]
+    bro = mkRelOffset_    both
+--  hro = mkRelOffset_    [Haskell] --Not currently used. Uncomment if needed
+    cro = mkRelOffset_    [Cmm]
+    br  = mkRep_          both
+--  hr  = mkRep_          [Haskell] --Not currently used. Uncomment if needed
+    cr  = mkRep_          [Cmm]
+    bm  = mkMacro_        both
+--  hm  = mkMacro_        [Haskell] --Not currently used. Uncomment if needed
+    cm  = mkMacro_        [Cmm]
+    cmp = mkMacroPayload_ [Cmm]
+    crg = mkRepGcptr_     [Cmm]
 
-  ,offset [cro "i",cr,cm] "StgFunInfoTable" "f.slow_apply"
-  ,offset [cro "i",cr,cm] "StgFunInfoTable" "f.fun_type"
-  ,offset [bro "i",br,bm] "StgFunInfoTable" "f.arity"
-  ,offset [cro "i",cr,cm] "StgFunInfoTable" "f.b.bitmap"
-#endif
-  ]
-
---------------------------------------------------------------------------------
--- wanteds_profOnly : These constants are only generated when PROFILING is on --
---                    Any attempt to use these constants when PROFILING is off--
---                    will generate an error                                  --
---------------------------------------------------------------------------------
-wanteds_profOnly = concat
-  [sizeW  both       "StgProfHeader"
-  ,offset [bo,br,bm] "StgClosure"     "header.prof.ccs"
-  ,offset [bo,br,bm] "StgClosure"     "header.prof.hp.ldvw"
-  ,offset [bo,br,bm] "StgTSO"         "prof.cccs"
-  ,size   [Cmm]      "StgTSOProfInfo"
-  ]
-
-bro,hro,cro           :: String -> String -> String -> String -> Wanted
-bo,co,br,cr,hr,bm,cm,hm,cmp,crg :: String -> String -> String -> Wanted
-bo  = mkOffset_       both
---ho  = mkOffset_       [Haskell]
-co  = mkOffset_       [Cmm]
-bro = mkRelOffset_    both
-hro = mkRelOffset_    [Haskell]
-cro = mkRelOffset_    [Cmm]
-br  = mkRep_          both
-hr  = mkRep_          [Haskell]
-cr  = mkRep_          [Cmm]
-bm  = mkMacro_        both
-hm  = mkMacro_        [Haskell]
-cm  = mkMacro_        [Cmm]
-cmp = mkMacroPayload_ [Cmm]
-crg = mkRepGcptr_     [Cmm]
-
-type Template = [Group]
-data Group = Group [Wanted] Conditional
-data Conditional = Error (String -> String)
-                 | Derive
-                 | If Define Then Conditional Else Conditional
-data Then = Then
-data Else = Else
-
-template :: Template
-template =
-  [ Group wanteds_i Derive
-  , Group wanteds_p $
-      If Profiling Then Derive Else Derive
-  , Group wanteds_profOnly $
-      If Profiling Then Derive Else $
-       Error (++ " is not accessible when not compiling for PROFILING")
-  ]
-
-data Fst a b = Fst a
-data Snd a b = Snd b
-
-type Wanted = Constant Fst
-type Result = Constant Snd
-
-data Constant f = Constant String [Target] (Either' f)
-
-data Either' f = Independant Independant
-               | Dependant   (Dependant f)
-
-isDependant,isIndependant :: Wanted -> Bool
-isDependant (Constant _ _ Dependant{}) = True
-isDependant _ = False
-isIndependant = not . isDependant
+data Constant   = Constant {
+   cName        :: String
+  ,cSensitiveTo :: Set Define
+  ,cErrorWhen   :: [Set Define]
+  ,cTargets     :: [Target]
+  ,cEither      :: Either Independant Dependant
+}
 
 --Platform Independant Constant
 data Independant = Macro | MacroPayload | RepGcptr | Literal [String]
 
-
-
 --Platform Dependant Constant
-data Dependant f = Rep  (f CExpr   Integer) -- note [GetRep]
-                 | Word (f CExpr   Integer)
-                 | Int  (f CExpr   Integer)
-                 | Nat  (f CExpr   Integer)
-                 | Bool (f CPPExpr Bool   )
+data Dependant = Rep  CExpr -- note [Rep]
+               | Word CExpr
+               | Int  CExpr
+               | Nat  CExpr
+               | Bool CPPExpr
 
-showType :: Dependant a -> String
+-- [Rep]
+-- Rep is like Word, except it represents the size in bytes of a field.
+-- It has a different format in Cmm land vs Haskell land:
+--   Cmm land: b32         (32 bits)
+--   Haskell land: 4       (4 bytes)
+
+showType :: Dependant -> String
 showType Rep{}  = "Int"
 showType Word{} = "Int"
 showType Int{}  = "Int"
 showType Nat{}  = "Integer"
 showType Bool{} = "Bool"
 
--- [GetRep]
--- GetRep is for defining REP_x to be b32 etc
--- These are both the C-- types used in a load
---    e.g.  b32[addr]
--- and the names of the CmmTypes in the compiler
---    b32 :: CmmType
-
-data Target = Haskell | Cmm deriving Eq
-both :: [Target]
-both = [Haskell, Cmm]
-
-data Define = Profiling deriving (Eq, Show)
-
-showDefine :: Define -> String
-showDefine Profiling = "PROFILING"
-
 newtype CExpr = CExpr     String
 newtype CPPExpr = CPPExpr String
+data Target = Haskell | Cmm deriving Eq
 
-size,sizeW :: [Target] -> String -> [Wanted]
+[Add sensitivity]
+To add sensitivity to a new CPP Define, modify the:
+  * Define data type
+  * allDefines function
+  * showDefine function
+
+Now you will be able to add your Define to
+
+data Define = Profiling | TablesNextToCode deriving (Eq, Show, Ord)
+
+allDefines :: Set Define
+allDefines = Set.fromList [Profiling, TablesNextToCode]
+
+showDefine :: Target -> Define -> String
+showDefine Cmm     Profiling = "PROFILING"
+showDefine Cmm     TablesNextToCode = "TABLES_NEXT_TO_CODE"
+showDefine Haskell Profiling = "(gopt Opt_SccProfilingOn dflags)"
+showDefine Haskell TablesNextToCode = "(tablesNextToCode dflags)"
+
+size,sizeW :: [Target] -> String -> [Constant]
 size ts theType = [mkWord ts name expr]
   where
     name = "SIZEOF_"    ++ theType
@@ -749,316 +690,352 @@ sizeW ts theType = [mkWord ts name expr]
     name = "SIZEOFW_"    ++ theType
     expr = "TYPE_SIZEW(" ++ theType ++ ")"
 
-lit :: [Target] -> String -> [String] -> [Wanted]
-lit ts nm strs  = [Constant nm ts $ Independant $ Literal strs]
+lit :: [Target] -> String -> [String] -> [Constant]
+lit ts nm strs  = [mkConstant ts nm $ Left $ Literal strs]
 
 mkOffset_,mkRep_,mkMacro_, mkMacroPayload_, mkRepGcptr_
-             :: [Target]           -> String -> String -> String -> Wanted
-mkRelOffset_ :: [Target] -> String -> String -> String -> String -> Wanted
-mkRelOffset_ ts theField' theType theField nameBase = mkInt ts name expr
+             :: [Target]           -> String -> String -> String -> Constant
+mkRelOffset_ :: [Target] -> String -> String -> String -> String -> Constant
+mkRelOffset_ ts fld' typ fld nameBase = mkConstant ts n $ Right $ Int $ CExpr e
+  where
+    n = "OFFSET_" ++ nameBase
+    e =   "(offsetof(" ++ typ ++ "," ++ fld  ++ "))"
+     ++ "- (offsetof(" ++ typ ++ "," ++ fld' ++ "))"
+mkOffset_ ts typ fld nameBase = mkConstant ts name $ Right $  Word $ CExpr expr
   where
     name = "OFFSET_" ++ nameBase
-    expr = "(offsetof(" ++ theType  ++ "," ++ theField  ++ "))"
-     ++ " - (offsetof(" ++ theType  ++ "," ++ theField' ++ "))"
-mkOffset_ ts theType theField nameBase = mkWord ts name expr
-  where
-    name = "OFFSET_" ++ nameBase
-    expr = "offsetof(" ++ theType ++ "," ++ theField ++ ")"
-mkRep_ ts theType theField nameBase = mkRep ts name expr
+    expr = "offsetof(" ++ typ ++ "," ++ fld ++ ")"
+mkRep_ ts typ fld nameBase = mkConstant ts name $ Right $ Rep $ CExpr expr
   where
     name = "REP_" ++ nameBase
-    expr = "FIELD_SIZE(" ++ theType ++ ", " ++ theField ++ ")"
+    expr = "FIELD_SIZE(" ++ typ ++ ", " ++ fld ++ ")"
 
-mkMacro_        ts _ty _fld nm = Constant nm ts $ Independant Macro
-mkMacroPayload_ ts _ty _fld nm = Constant nm ts $ Independant MacroPayload
-mkRepGcptr_     ts _ty _fld nm = Constant nm ts $ Independant RepGcptr
+mkWord,mkInt,mkNat,mkBool :: [Target] -> String -> String -> Constant
+mkWord ts n e = mkConstant ts n $ Right $ Word $ CExpr e
+mkInt  ts n e = mkConstant ts n $ Right $ Int  $ CExpr e
+mkNat  ts n e = mkConstant ts n $ Right $ Nat  $ CExpr e
+mkBool ts n e = mkConstant ts n $ Right $ Bool $ CPPExpr e
 
-mkRep, mkInt, mkWord, mkNat, mkBool :: [Target] -> String -> String -> Wanted
-mkRep  ts n e = Constant n ts $ Dependant $ Rep  $ Fst $ CExpr   e
-mkInt  ts n e = Constant n ts $ Dependant $ Int  $ Fst $ CExpr   e
-mkWord ts n e = Constant n ts $ Dependant $ Word $ Fst $ CExpr   e
-mkNat  ts n e = Constant n ts $ Dependant $ Nat  $ Fst $ CExpr   e
-mkBool ts n e = Constant n ts $ Dependant $ Bool $ Fst $ CPPExpr e
+mkMacro_        ts _ty _fld nm = mkConstant ts nm $ Left Macro
+mkMacroPayload_ ts _ty _fld nm = mkConstant ts nm $ Left MacroPayload
+mkRepGcptr_     ts _ty _fld nm = mkConstant ts nm $ Left RepGcptr
 
-offset_ :: [String->String->String->Wanted]->String->String->String->[Wanted]
-offset  :: [String->String->String->Wanted]->String->String->        [Wanted]
+mkConstant :: [Target] -> String -> Either Independant Dependant ->  Constant
+mkConstant targets name e = Constant {cName = name,
+                                      cSensitiveTo = undefined,
+                                      cErrorWhen = [],
+                                      cTargets = targets,
+                                      cEither = e}
+
+offset_ :: [String->String->String->Constant]->String->String->String->[Constant]
+offset  :: [String->String->String->Constant]->String->String->        [Constant]
 offset_ fs theType theField nameBase = [f theType theField nameBase | f <- fs]
 offset  fs theType theField          = offset_ fs theType theField nameBase
   where nameBase = theType ++ "_" ++ (deleteDots $ theField)
 
-getResults :: [Define] -> [Wanted] -> IO [Result]
-getResults ds wanteds = do
-  tmpdir   <- requireOption "tmpdir"       o_tmpdir
-  gccProg  <- requireOption "gcc program"  o_gccProg
-  nmProg   <- requireOption "nm program"   o_nmProg
-  verbose  <- getOption                    o_verbose
-  gccFlags <- getOption                    o_gccFlags
-  let cFile = tmpdir </> "tmp.c"
-      oFile = tmpdir </> "tmp.o"
-      gccFlags' = gccFlags ++ ["-c", cFile, "-o", oFile]
-  writeFile cFile $ unlines $
-    ["//autogenerated file see DeriveConstants.hs"
-    ,"#define IN_STG_CODE 0"
-    ,"#define THREADED_RTS"
-    ,"#include \"PosixSource.h\""
-    ,"#include \"Rts.h\""
-    ,"#include \"Stable.h\""
-    ,"#include \"Capability.h\""
-    ,""
-    ,"#include <inttypes.h>"
-    ,"#include <stddef.h>"
-    ,"#include <stdio.h>"
-    ,"#include <string.h>"
-    ,""
-    ,"#define TYPE_SIZE(type) (sizeof(type))"
-    ,"#define TYPE_SIZEW(type) (sizeofW(type))"
-    ,"#define FIELD_SIZE(s_type, field) \\"
-    ,"((size_t)sizeof(((s_type*)0)->field))"
-    ,""
-    ,"#pragma GCC poison sizeof sizeofw"
-    ] ++ concatMap doWanted wanteds
-  execute verbose gccProg $ gccFlags' ++ map (("-D" ++) . showDefine) ds
-  xs <- readProcess nmProg [oFile] ""
-  let ls = lines xs
-      ms = map parseNmLine ls
-      m = Map.fromList $ catMaybes ms
-  mapM (lookupResult m) wanteds
+subSets :: Ord a => Set a -> [Set a]
+subSets = map Set.fromList . subsequences . Set.elems
+
+getResultMap :: IO (Map (String,Set Define) Integer)
+getResultMap = do
+  results <- mapM doSet $ subSets allDefines
+  let m = Map.fromList $ catMaybes $ concat results
+  return m
+ where
+  prefix = "derivedConstant"
+  doSet set = do
+    tmpdir   <- requireOption "tmpdir"       o_tmpdir
+    gccProg  <- requireOption "gcc program"  o_gccProg
+    nmProg   <- requireOption "nm program"   o_nmProg
+    verbose  <- getOption                    o_verbose
+    gccFlags <- getOption                    o_gccFlags
+    let cFile = tmpdir </> "tmp" ++ concatMap show (Set.elems set) ++ ".c"
+        oFile = tmpdir </> "tmp" ++ concatMap show (Set.elems set) ++ ".o"
+        gccFlags' = gccFlags ++ ["-c", cFile, "-o", oFile]
+    -- Note [undef TABLES_NEXT_TO_CODE]
+    -- ghcautconf.h might #define TABLES_NEXT_TO_CODE.
+    -- However, we need to generate values with TABLES_NEXT_TO_CODE on and off.
+    -- So we undefine it. It might be redefined on the line bellow it.
+    writeFile cFile $ unlines $
+      ["//autogenerated file see DeriveConstants.hs"
+      ,"#define IN_STG_CODE 0"
+      ,"#define THREADED_RTS"
+      ,"#include \"ghcautoconf.h\""     -- Note
+      ,"#undef TABLES_NEXT_TO_CODE" -- [undef TABLES_NEXT_TO_CODE]
+      , unlines $ map (("#define " ++) . showDefine Cmm) $ Set.elems set
+      ,"#include \"PosixSource.h\""
+      ,"#include \"Rts.h\""
+      ,"#include \"Stable.h\""
+      ,"#include \"Capability.h\""
+      ,""
+      ,"#include <inttypes.h>"
+      ,"#include <stddef.h>"
+      ,"#include <stdio.h>"
+      ,"#include <string.h>"
+      ,""
+      ,"#ifdef TABLES_NEXT_TO_CODE"
+      ,"#  define CODE_OR_ENTRY code"
+      ,"#else"
+      ,"#  define CODE_OR_ENTRY entry"
+      ,"#endif"
+      ,""
+      ,"#define TYPE_SIZE(type) (sizeof(type))"
+      ,"#define TYPE_SIZEW(type) (sizeofW(type))"
+      ,"#define FIELD_SIZE(s_type, field) \\"
+      ,"((size_t)sizeof(((s_type*)0)->field))"
+      ,""
+      ,"#pragma GCC poison sizeof sizeofw"
+
+      ] ++ concatMap (doConstant set) constants
+    execute verbose gccProg $ gccFlags'
+    xs <- readProcess nmProg [oFile] ""
+    return $ map (parseNmLine set) $ lines xs
+
+  -- We add 1 to the value, as some platforms will make a symbol
+  -- of size 1 when for
+  --     char foo[0];
+  -- We then subtract 1 again when parsing.
+  doConstant set c | set `elem` cErrorWhen c = []
+                   | otherwise = case cEither c of
+                       Left{} -> []
+                       Right e -> doExpr (prefix ++ cName c) e
+
+  doExpr n (Rep  (CExpr cExpr))
+    = ["char " ++ n ++ "[1 + " ++ cExpr ++ "];"]
+  doExpr n (Word (CExpr cExpr))
+    = ["char " ++ n ++ "[1 + " ++ cExpr ++ "];"]
+  doExpr n (Int  (CExpr cExpr))
+    = ["char " ++ n ++ "Mag[1 + ((intptr_t)(" ++ cExpr ++ ") >= 0 ? ("
+       ++ cExpr ++ ") : -(" ++ cExpr ++ "))];"
+      ,"char " ++ n ++ "Sig[(intptr_t)(" ++ cExpr ++ ") >= 0 ? 3 : 1];"
+      ]
+  doExpr n (Nat  (CExpr cExpr))
+    = -- These casts fix "right shift count >= width of type"
+            -- warnings
+    let cExpr' = "(uint64_t)(size_t)(" ++ cExpr ++ ")"
+    in ["char " ++ n ++ "0[1 + ((" ++ cExpr' ++ ") & 0xFFFF)];"
+       ,"char " ++ n ++ "1[1 + (((" ++ cExpr' ++ ") >> 16) & 0xFFFF)];"
+       ,"char " ++ n ++ "2[1 + (((" ++ cExpr' ++ ") >> 32) & 0xFFFF)];"
+       ,"char " ++ n ++ "3[1 + (((" ++ cExpr' ++ ") >> 48) & 0xFFFF)];"
+       ]
+  doExpr n (Bool (CPPExpr cppExpr))
+    = ["#if " ++ cppExpr,
+       "char " ++ n ++ "[1];",
+       "#else",
+       "char " ++ n ++ "[2];",
+       "#endif"]
+
+  -- parseNmLine parses nm output that looks like
+  -- "0000000b C derivedConstantMAX_Vanilla_REG"
+  -- and returns ("MAX_Vanilla_REG", 11)
+  parseNmLine set xs0 = case break (' ' ==) xs0 of
+    (x1, ' ' : xs1) ->
+      case break (' ' ==) xs1 of
+        (x2, ' ' : x3) ->
+          case readHex x1 of
+            [(bytes, "")] ->
+              case x2 of
+                "C" ->
+                  let x3' = case x3 of
+                        '_' : rest -> rest
+                        _          -> x3
+                  in case stripPrefix prefix x3' of
+                    Just name -> Just ((name,set), bytes)
+                    _ -> Nothing
+                _ -> Nothing
+            _ -> Nothing
+        _ -> Nothing
+    _ -> Nothing
+
+sanityCheck :: Map (String,Set Define) Integer ->  Target -> Bool
+sanityCheck m t = all f constants
+ where
+  f c = case allEq $ relResults c of
+          True -> True
+          False -> error
+           ("sanityCheck: " ++ show (cName c) ++ " " ++ show (relResults c))
+
+  relResults :: Constant -> [String]
+  relResults c = case cEither c of
+    Left{} -> []
+    Right{} -> map (lookupConstant m t c) $ relDefines c
+  relDefines :: Constant -> [Set Define]
+  relDefines c = (filter (Set.isSubsetOf $ cSensitiveTo c) $ subSets allDefines)
+                  \\ cErrorWhen c
+
+  allEq :: Eq a => [a] -> Bool
+  allEq [] = True
+  allEq xs = all (== (head xs)) xs
+
+lookupConstant :: Map (String,Set Define) Integer
+               -> Target -> Constant -> Set Define -> String
+lookupConstant m t c set = case cEither c of
+  Left{} -> error "attempted to look up the value of an independant"
+  Right e -> case e of
+   Word{}  -> show $ lookupSmall (cName c,set) - 1
+   Rep{}   -> case t of Haskell -> show $ lookupSmall (cName c,set) - 1
+                        Cmm   -> "b" ++ show ((lookupSmall (cName c,set) - 1)*8)
+   Int{}   -> show $ (lookupSmall (cName c ++ "Mag",set) - 1)
+                   * (lookupSmall (cName c ++ "Sig",set) - 2)
+   Nat{}   -> show $   (lookupSmall (cName c ++ "0",set) - 1)
+              + shiftL (lookupSmall (cName c ++ "1",set) - 1) 16
+              + shiftL (lookupSmall (cName c ++ "2",set) - 1) 32
+              + shiftL (lookupSmall (cName c ++ "3",set) - 1) 48
+   Bool{}-> case lookupSmall (cName c,set) of 1 -> case t of Haskell -> "True"
+                                                             Cmm     -> "1"
+                                              2 -> case t of Haskell -> "False"
+                                                             Cmm     -> "0"
+                                              n -> error ("Bad bool: " ++ show n)
   where
-    prefix = "derivedConstant"
-    -- We add 1 to the value, as some platforms will make a symbol
-    -- of size 1 when for
-    --     char foo[0];
-    -- We then subtract 1 again when parsing.
-    doWanted (Constant _name _ts Independant{}) = []
-    doWanted (Constant  name _ts (Dependant e)) = doExpr (prefix ++ name) e
-    doExpr n (Rep  (Fst (CExpr cExpr)))
-      = ["char " ++ n ++ "[1 + " ++ cExpr ++ "];"]
-    doExpr n (Word (Fst (CExpr cExpr)))
-      = ["char " ++ n ++ "[1 + " ++ cExpr ++ "];"]
-    doExpr n (Int  (Fst (CExpr cExpr)))
-      = ["char " ++ n ++ "Mag[1 + ((intptr_t)(" ++ cExpr ++ ") >= 0 ? ("
-         ++ cExpr ++ ") : -(" ++ cExpr ++ "))];"
-        ,"char " ++ n ++ "Sig[(intptr_t)(" ++ cExpr ++ ") >= 0 ? 3 : 1];"
-        ]
-    doExpr n (Nat  (Fst (CExpr cExpr)))
-      = -- These casts fix "right shift count >= width of type"
-              -- warnings
-      let cExpr' = "(uint64_t)(size_t)(" ++ cExpr ++ ")"
-      in ["char " ++ n ++ "0[1 + ((" ++ cExpr' ++ ") & 0xFFFF)];"
-         ,"char " ++ n ++ "1[1 + (((" ++ cExpr' ++ ") >> 16) & 0xFFFF)];"
-         ,"char " ++ n ++ "2[1 + (((" ++ cExpr' ++ ") >> 32) & 0xFFFF)];"
-         ,"char " ++ n ++ "3[1 + (((" ++ cExpr' ++ ") >> 48) & 0xFFFF)];"
-         ]
-    doExpr n (Bool (Fst (CPPExpr cppExpr)))
-      = ["#if " ++ cppExpr,
-         "char " ++ n ++ "[1];",
-         "#else",
-         "char " ++ n ++ "[2];",
-         "#endif"]
+    -- Note [Int Bounds]
+    -- If an Int value is larger than 2^28 or smaller than -2^28, then fail.
+    -- This test is a bit conservative, but if any constants are roughly
+    -- maxBound or minBound then we probably need them to be Integer rather than
+    -- Int so that cross-compiling between 32bit and 64bit platforms works.
+    lookupSmall :: (String,Set Define) -> Integer
+    lookupSmall x =
+      case  Map.lookup x m of
+        Just v -> if v >   2^(28 :: Int) || -- Note [Int Bounds]
+                     v < -(2^(28 :: Int))
+                  then error ("Value too large for GetWord: " ++ show v) else v
+        _ -> error (show x ++ " not found (lookupSmall)")
 
-    -- parseNmLine parses nm output that looks like
-    -- "0000000b C derivedConstantMAX_Vanilla_REG"
-    -- and returns ("MAX_Vanilla_REG", 11)
-    parseNmLine xs0 = case break (' ' ==) xs0 of
-      (x1, ' ' : xs1) ->
-        case break (' ' ==) xs1 of
-          (x2, ' ' : x3) ->
-            case readHex x1 of
-              [(bytes, "")] ->
-                case x2 of
-                  "C" ->
-                    let x3' = case x3 of
-                          '_' : rest -> rest
-                          _          -> x3
-                    in case stripPrefix prefix x3' of
-                      Just name -> Just (name, bytes)
-                      _ -> Nothing
-                  _ -> Nothing
-              _ -> Nothing
-          _ -> Nothing
-      _ -> Nothing
-
-    -- If an Int value is larger than 2^28 or smaller
-    -- than -2^28, then fail.
-    -- This test is a bit conservative, but if any
-    -- constants are roughly maxBound or minBound then
-    -- we probably need them to be Integer rather than
-    -- Int so that -- cross-compiling between 32bit and
-    -- 64bit platforms works.
-    lookupSmall :: Map String Integer -> String -> IO Integer
-    lookupSmall m name
-          = case Map.lookup name m of
-              Just v
-               | v >   2^(28 :: Int) ||
-                 v < -(2^(28 :: Int)) ->
-                  die ("Value too large for GetWord: " ++ show v)
-               | otherwise -> return v
-              Nothing -> die ("Can't find " ++ show name)
-
-    lookupResult :: Map String Integer -> Wanted -> IO Result
-    lookupResult _ (Constant n ts (Independant i)) =
-      return $ Constant n ts (Independant i)
-    lookupResult m (Constant name ts (Dependant expr)) = do
-      val <- case expr of
-               Word{} -> do v <- lookupSmall m name
-                            return $ Word $ Snd $ v - 1
-               Int{} ->  do mag <- lookupSmall m (name ++ "Mag")
-                            sig <- lookupSmall m (name ++ "Sig")
-                            return $ Int $ Snd $ (mag - 1) * (sig - 2)
-               Nat{} ->  do v0 <- lookupSmall m (name ++ "0")
-                            v1 <- lookupSmall m (name ++ "1")
-                            v2 <- lookupSmall m (name ++ "2")
-                            v3 <- lookupSmall m (name ++ "3")
-                            let v = (v0 - 1)
-                                  + shiftL (v1 - 1) 16
-                                  + shiftL (v2 - 1) 32
-                                  + shiftL (v3 - 1) 48
-                            return $ Nat $ Snd v
-               Bool{} -> do v <- lookupSmall m name
-                            case v of
-                              1 -> return $ Bool $ Snd True
-                              2 -> return $ Bool $ Snd False
-                              _ -> die ("Bad boolean: " ++ show v)
-               Rep{} -> do  v <- lookupSmall m name
-                            return $ Rep $ Snd $ v - 1
-      return $ Constant name ts (Dependant val)
-
-filterWanteds :: [Wanted] -> Target -> [Wanted]
-filterWanteds ws t = [Constant n ts x | Constant n ts x <- ws, t `elem` ts]
+filterConstants :: Target -> [Constant]
+filterConstants t = [c | c <- constants, t `elem` cTargets c]
 
 writeHaskellType :: IO ()
 writeHaskellType = do
  outFile <- requireOption "no output file" o_outputFile
- groups <- mapM doGroup template
  writeFile outFile $ unlines
   ["data PlatformConstants = PlatformConstants {"
-  ,unlines $ indent 2 $ commas $ concat $ groups
+  ,unlines $ indent 2 $ commas $ concatMap doConstant $ filterConstants Haskell
   ,"} deriving Read"
   ]
  where
-  doGroup (Group ws conditional) =
-   doConditional conditional startState{cs_derive = derive}
-   where
-    derive defines = return $ concatMap doWanted $ filterWanteds ws Haskell
-     where
-      doWanted (Constant _n _t (Independant _i)) = []
-      doWanted (Constant name _t (Dependant expr)) =
-       ["pc" ++ concatMap show defines ++ "_" ++ name ++ " :: " ++ showType expr]
+   doConstant c = concatMap (doSet c) $ subSets $ cSensitiveTo c
+   doSet c set = if set `elem` cErrorWhen c then [] else case cEither c of
+     Left{} -> []
+     Right e -> ["pc" ++ concatMap show (Set.elems set)
+                ++ "_" ++ cName c ++ " :: " ++ showType e]
 
-writeHaskellWrappers :: (Wanted -> Bool) -> IO ()
-writeHaskellWrappers p = do
- outFile <- requireOption "no output file" o_outputFile
- mapM doGroup template >>= (writeFile outFile . unlines . concat)
- where
-  doGroup (Group ws conditional) = mapM doWanted
-    (filter p $ filterWanteds ws Haskell) >>= (return . concat)
-   where
-    doWanted (Constant name _t (Independant Macro)) = return
-      ["lOAD_" ++ name ++ " :: DynFlags -> CmmExpr -> CmmExpr"
-      ,"sTORE_" ++ name ++ " :: DynFlags -> CmmExpr -> CmmExpr -> CmmAGraph"
-      ,"lOAD_" ++ name ++ " dflags ptr ="
-      ,"  CmmLoad (cmmOffsetB dflags ptr (oFFSET_" ++ name ++ " dflags)) $"
-      ,"    cmmBits $ widthFromBytes $ rEP_" ++ name ++ " dflags"
-      ,"sTORE_" ++ name ++ " dflags ptr val ="
-      ,"  mkStore (cmmOffsetB dflags ptr (oFFSET_" ++ name ++ " dflags)) val"]
-    doWanted (Constant _ _ (Independant (Literal strs))) = return strs
-    doWanted (Constant _ _ (Independant _)) = error "writeHaskellWrappers:Indie"
-    doWanted (Constant name _t (Dependant expr)) = do
-      conds <- doConditional conditional startState {cs_derive     = derive
-                                                    ,cs_error      = err
-                                                    ,cs_ifThenElse = ifThenElse
-                                                    }
-      return $ [haskellise name ++ " :: DynFlags -> " ++ showType expr
-               ,haskellise name ++ " dflags = "] ++ indent 2 conds
-      where
-       ifThenElse Profiling        = f "gopt Opt_SccProfilingOn dflags"
-       f a b c = ["if " ++ a ++ " then ("]
-              ++ indent 2 b
-              ++ [") else ("]
-              ++ indent 2 c
-              ++ [")"]
-       err g = ["error \"" ++ g name ++ "\""]
-       derive ds = return $ ["pc" ++ concatMap show ds ++ "_" ++ name
-                             ++ " $ sPlatformConstants $ settings dflags"]
+dflagsOrCodeGenConstants :: IO [Constant]
+dflagsOrCodeGenConstants = do
+ whr <- requireOption "needs --dflags or --codegen" o_where
+ let p c = case whr of CodeGen -> either (\_->True) (\_->False) (cEither c)
+                       Dflags -> either (\_->False) (\_->True) (cEither c)
+ return $ filter p $ filterConstants Haskell
 
-writeHaskellExports :: (Wanted -> Bool) -> IO ()
-writeHaskellExports p = do
+mkLoad,mkStore,mkMacro :: String -> String
+mkLoad nm =  "CmmLoad (cmmOffsetB dflags ptr (oFFSET_" ++ nm ++
+             " dflags)) $ cmmBits $ widthFromBytes $ rEP_" ++ nm ++ " dflags"
+mkStore nm = "mkStore (cmmOffsetB dflags ptr (oFFSET_" ++ nm ++ " dflags)) val"
+mkMacro nm = def (nm ++ "(__ptr__)")
+                 ("REP_" ++ nm ++ "[__ptr__+OFFSET_" ++ nm ++ "]")
+
+writeHaskellWrappers :: IO ()
+writeHaskellWrappers = do
  outFile <- requireOption "no output file" o_outputFile
- writeFile outFile $ unlines $ indent 4 $ commas $ concatMap doGroup template
+ cs <- dflagsOrCodeGenConstants
+ writeFile outFile $ unlines $ concatMap doConstant cs
  where
-  doGroup (Group ws _) = concatMap doWanted (filter p $ filterWanteds ws Haskell)
-  doWanted (Constant name _ts (Independant Macro)) = ["lOAD_" ++ name
-                                                     ,"sTORE_" ++ name]
-  doWanted (Constant name _ts (Independant Literal{})) = [name]
-  doWanted (Constant _ _ (Independant _)) = error "writeHaskellExports:Indie"
-  doWanted (Constant name _ts _expr) = [haskellise name]
+   doConstant :: Constant -> [String]
+   doConstant c = case cEither c of
+     Left Macro ->
+      ["lOAD_" ++ cName c ++ " :: DynFlags -> CmmExpr -> CmmExpr"
+      ,"lOAD_" ++ cName c ++ " dflags ptr = " ++ mkLoad (cName c)
+      ,"sTORE_" ++ cName c ++ " :: DynFlags -> CmmExpr -> CmmExpr -> CmmAGraph"
+      ,"sTORE_" ++ cName c ++ " dflags ptr val = " ++ mkStore (cName c)]
+     Left (Literal strs) -> strs
+     Left{} -> error "writeHaskellWrappers"
+     Right e -> [haskellise (cName c) ++ " :: DynFlags -> " ++ showType e
+                ,haskellise (cName c) ++ " dflags = "]
+      ++ (indent 2 $ f c (Set.empty) (Set.elems $ cSensitiveTo c))
+   f :: Constant -> Set Define -> [Define] -> [String]
+   f c set [] = if set `elem` cErrorWhen c then [mkError Haskell set c]
+                else ["pc" ++ concatMap show (Set.elems set) ++ "_" ++ cName c
+                      ++ " $ sPlatformConstants $ settings dflags"]
+   f c set (d:ds) = concat [["if " ++ showDefine Haskell d ++ " then ("]
+                            ,indent 2 $ f c (Set.insert d set) ds
+                            ,[") else ("]
+                            ,indent 2 $ f c set ds
+                            ,[")"]
+                            ]
+
+writeHaskellExports :: IO ()
+writeHaskellExports = do
+ outFile <- requireOption "no output file" o_outputFile
+ cs <- dflagsOrCodeGenConstants
+ writeFile outFile $ unlines $ indent 4 $ commas $ concatMap doConstant cs
+ where
+  doConstant c = case cEither c of Left Macro -> ["lOAD_" ++ cName c
+                                                 ,"sTORE_" ++ cName c]
+                                   Left Literal{} -> [cName c]
+                                   Left{} -> error  "writeHaskellExports"
+                                   Right{} -> [haskellise $ cName c]
+
+mkError :: Target -> Set Define -> Constant -> String
+mkError t set c = case t of
+  Cmm -> "#error " ++ msg
+  Haskell -> "error \"" ++ msg ++ "\""
+  where msg = "Derived Constant " ++ cName c ++ " is not defined for "
+           ++ "the following sets of CPP defines: " ++ show (cErrorWhen c) ++ ". "
+           ++ "The current set of CPP defines is: " ++ show set ++ "."
 
 writeValues :: Target -> IO ()
 writeValues Haskell = do
  outFile <- requireOption "no output file" o_outputFile
- groups <- mapM doGroup template
+ resMap <- getResultMap
+ case sanityCheck resMap Haskell of True -> return () -- do a sanitycheck
+                                    False -> error "sanityCheck is buggy"
+ let doConstant :: Constant -> [String]
+     doConstant c = case cEither c of
+       Left{} -> []
+       Right{} -> concatMap doSet $ subSets $ cSensitiveTo c
+      where
+       doSet :: Set Define -> [String]
+       doSet set = if set `elem` cErrorWhen c then [] else
+         ["pc" ++ concatMap show (Set.elems set) ++ "_" ++ cName c ++ " = "
+          ++ lookupConstant resMap Haskell c set]
+
  writeFile outFile $ unlines
    ["PlatformConstants {"
-   ,unlines $ indent 2 $ commas $ concat groups
+   ,unlines $ indent 2 $ commas $ concatMap doConstant $ filterConstants Haskell
    ,"}"
    ]
- where
-  doGroup (Group ws conditional) =
-   doConditional conditional startState{cs_derive = derive}
-   where
-    derive ds = do
-      rs <- getResults ds $ filterWanteds ws Haskell
-      return $ concatMap doResult rs
-     where
-      doResult (Constant _n   _t (Independant _i)) = []
-      doResult (Constant name _ts (Dependant value)) =
-        ["pc" ++ concatMap show ds ++ "_" ++ name ++ " = " ++ showVal value]
-      showVal (Rep  (Snd v)) = show v
-      showVal (Word (Snd v)) = show v
-      showVal (Int  (Snd v)) = show v
-      showVal (Nat  (Snd v)) = show v
-      showVal (Bool (Snd v)) = show v
 
 writeValues Cmm = do
   outFile  <- requireOption "no output file" o_outputFile
-  groups <- mapM doGroup template
+  resMap <- getResultMap
+  case sanityCheck resMap Cmm of True -> return () -- do a sanitycheck
+                                 False -> error "sanityCheck is buggy"
+  let f :: Set Define -> [String]
+      f set = g Set.empty (Set.elems set)
+                $ filter ((== set).cSensitiveTo) $ filterConstants Cmm
+      g :: Set Define -> [Define] -> [Constant] -> [String]
+      g set [] cs = concatMap (doConstant set) cs
+      g set (d:ds) cs = concat [["#ifdef " ++ showDefine Cmm d]
+                               ,indent 2 $ g (Set.insert d set) ds cs
+                               ,["#else /* " ++ showDefine Cmm d ++ " */"]
+                               ,indent 2 $ g set ds cs
+                               ,["#endif /* !" ++ showDefine Cmm d ++ " */"]
+                               ]
+      doConstant :: Set Define -> Constant -> [String]
+      doConstant set c =
+       case cEither c of
+        Right{} -> [def (cName c) $ if set `elem` cErrorWhen c
+         then mkError Cmm set c else lookupConstant resMap Cmm c set]
+        Left typ -> case typ of
+          Literal strs -> strs
+          RepGcptr -> [def ("REP_" ++ cName c) " gcptr"]
+          Macro    -> [mkMacro (cName c)]
+          MacroPayload ->  [def x y]
+           where x = cName c ++ "(__ptr__,__ix__)"
+                 y = "W_[__ptr__ + OFFSET_" ++ cName c ++ " + WDS(__ix__)]"
+
   writeFile outFile $ unlines $
     ["/* This file is created automatically.  Do not edit by hand.*/"
-    ,unlines $ concat groups
+    ,unlines $ concatMap f $ subSets allDefines
     ]
- where
-  doGroup (Group ws conditional) =
-   doConditional conditional startState{cs_derive = derive,
-                                        cs_error    = err,
-                                        cs_ifThenElse = ifThenElse}
-   where
-    ifThenElse d b c = concat [["#ifdef " ++ showDefine d]
-                              ,indent 2 $ b
-                              ,["#else /* " ++ showDefine d ++ " */"]
-                              ,indent 2 $ c
-                              ,["#endif /* " ++ showDefine d ++ " */"]
-                              ]
-    err f = concatMap doResult $ filterWanteds ws Cmm
-     where doResult (Constant name _ts _e)= [def name $ "#error " ++ f name]
-    derive ds = do
-     rs <- getResults ds $ filterWanteds ws Cmm
-     return $ concatMap doResult rs
-     where
-      showVal (Rep  (Snd v)) = "b" ++ (show $ v * 8)
-      showVal (Word (Snd v)) = show v
-      showVal (Int  (Snd v)) = show v
-      showVal (Nat  (Snd v)) = show v
-      showVal (Bool (Snd v)) = show $ fromEnum v
-      doResult (Constant name _ts (Dependant val)) = [def name $ showVal val]
-      doResult (Constant name _ts (Independant typ)) = case typ of
-        Literal strs -> strs
-        RepGcptr -> [def ("REP_" ++ name) " gcptr"]
-        Macro    -> [def x y]
-         where x =  name ++ "(__ptr__)"
-               y =  "REP_" ++ name ++ "[__ptr__+OFFSET_" ++ name ++ "]"
-        MacroPayload ->  [def x y]
-         where x = name ++ "(__ptr__,__ix__)"
-               y = "W_[__ptr__ + OFFSET_" ++ name ++ " + WDS(__ix__)]"
 
 die :: String -> IO a
 die err = do hPutStrLn stderr err
@@ -1075,8 +1052,8 @@ main :: IO ()
 main = do
   mode <- requireOption "mode" o_mode
   case mode of
-    Gen_Haskell_Wrappers p -> writeHaskellWrappers p
-    Gen_Haskell_Exports  p -> writeHaskellExports p
+    Gen_Haskell_Wrappers -> writeHaskellWrappers
+    Gen_Haskell_Exports  -> writeHaskellExports
     Gen_Haskell_Type     -> writeHaskellType
     Gen_Values target    -> writeValues target
 
@@ -1095,6 +1072,7 @@ getOption opt = do
 data Options = Options {
                    o_verbose :: Bool,
                    o_mode :: Maybe Mode,
+                   o_where :: Maybe Where,
                    o_tmpdir :: Maybe FilePath,
                    o_outputFile :: Maybe FilePath,
                    o_gccProg :: Maybe FilePath,
@@ -1106,49 +1084,46 @@ parseArgs :: IO Options
 parseArgs = do args <- getArgs
                opts <- f emptyOptions args
                return (opts {o_gccFlags = reverse (o_gccFlags opts)})
-    where
-          f opts [] = return opts
-          f opts ("-v" : args')
-              = f (opts {o_verbose = True}) args'
-          f opts ("--gen-haskell-type" : args')
-              = f (opts {o_mode = Just Gen_Haskell_Type}) args'
-          f opts ("--gen-haskell-dflags-wrappers" : args')
-            = f (opts {o_mode = Just (Gen_Haskell_Wrappers isDependant)}) args'
-          f opts ("--gen-haskell-dflags-exports" : args')
-            = f (opts {o_mode = Just (Gen_Haskell_Exports isDependant)}) args'
-          f opts ("--gen-haskell-codegen-wrappers" : args')
-            = f (opts {o_mode = Just (Gen_Haskell_Wrappers isIndependant)}) args'
-          f opts ("--gen-haskell-codegen-exports" : args')
-            = f (opts {o_mode = Just (Gen_Haskell_Exports isIndependant)}) args'
-          f opts ("--gen-header" : args')
-              = f (opts {o_mode = Just (Gen_Values Cmm)}) args'
-          f opts ("--gen-haskell-value" : args')
-              = f (opts {o_mode = Just (Gen_Values Haskell)}) args'
-          f opts ("--tmpdir" : dir : args')
-              = f (opts {o_tmpdir = Just dir}) args'
-          f opts ("-o" : fn : args')
-              = f (opts {o_outputFile = Just fn}) args'
-          f opts ("--gcc-program" : prog : args')
-              = f (opts {o_gccProg = Just prog}) args'
-          f opts ("--gcc-flag" : flag : args')
-              = f (opts {o_gccFlags = flag : o_gccFlags opts}) args'
-          f opts ("--nm-program" : prog : args')
-              = f (opts {o_nmProg = Just prog}) args'
-          f _ (flag : _) = die ("Unrecognised flag: " ++ show flag)
-          emptyOptions = Options {
-                             o_verbose = False,
-                             o_mode = Nothing,
-                             o_tmpdir = Nothing,
-                             o_outputFile = Nothing,
-                             o_gccProg = Nothing,
-                             o_gccFlags = [],
-                             o_nmProg = Nothing
-                       }
+ where
+  f opts [] = return opts
+  f opts ("-v" : args')                  =       f (opts {o_verbose = True}) args'
+  f opts ("--codegen" : args')           = f (opts {o_where = Just CodeGen}) args'
+  f opts ("--dflags" : args')            =  f (opts {o_where = Just Dflags}) args'
+  f opts ("--tmpdir" : dir : args')      =    f (opts {o_tmpdir = Just dir}) args'
+  f opts ("-o" : fn : args')             = f (opts {o_outputFile = Just fn}) args'
+  f opts ("--nm-program" : prog : args') =   f (opts {o_nmProg = Just prog}) args'
+  f opts ("--gcc-program" : prog : args') = f (opts {o_gccProg = Just prog}) args'
+  f opts ("--gcc-flag" : flag : args')   =
+    f (opts {o_gccFlags = flag : o_gccFlags opts}) args'
+  f opts ("--gen-haskell-type" : args')  =
+    f (opts {o_mode = Just Gen_Haskell_Type}) args'
+  f opts ("--gen-haskell-wrappers" : args') =
+    f (opts {o_mode = Just Gen_Haskell_Wrappers}) args'
+  f opts ("--gen-haskell-exports" : args') =
+    f (opts {o_mode = Just Gen_Haskell_Exports}) args'
+  f opts ("--gen-header" : args')        =
+    f (opts {o_mode = Just (Gen_Values Cmm)}) args'
+  f opts ("--gen-haskell-value" : args') =
+    f (opts {o_mode = Just (Gen_Values Haskell)}) args'
+  f _ (flag : _) = die ("Unrecognised flag: " ++ show flag)
+
+  emptyOptions = Options {
+    o_verbose = False,
+    o_mode = Nothing,
+    o_where = Nothing,
+    o_tmpdir = Nothing,
+    o_outputFile = Nothing,
+    o_gccProg = Nothing,
+    o_gccFlags = [],
+    o_nmProg = Nothing
+  }
 
 data Mode = Gen_Haskell_Type
-          | Gen_Haskell_Wrappers (Wanted -> Bool)
-          | Gen_Haskell_Exports  (Wanted -> Bool)
+          | Gen_Haskell_Wrappers
+          | Gen_Haskell_Exports
           | Gen_Values Target
+
+data Where = Dflags | CodeGen
 --------------------------------
 -- Boring string manipulation --
 --------------------------------
@@ -1174,30 +1149,3 @@ commas   xs =  (' ' :    head xs)
 
 def :: String -> String -> String
 def x y = "#define" ++ " " ++ x ++ " " ++ y
-
-----------------------------------------------
--- Boring Stuff for Traversing Conditional  --
-----------------------------------------------
-
-doConditional :: Conditional -> ConditionalState -> IO [String]
-doConditional (Error f) st  = return $ (cs_error st) f
-doConditional Derive st =         (cs_derive st) (cs_defines st)
-doConditional (If d Then c Else c') st = do
-  trueString  <- doConditional c st{cs_defines=d:cs_defines st}
-  falseString <- doConditional c' st
-  return $ (cs_ifThenElse st) d trueString falseString
-
-data ConditionalState = ConditionalState {
-       cs_derive     :: [Define] -> IO [String]
-      ,cs_error      :: (String -> String) -> [String]
-      ,cs_ifThenElse :: Define -> [String] -> [String] -> [String]
-      ,cs_defines    :: [Define]
-      }
-
-startState :: ConditionalState
-startState = ConditionalState {
-       cs_derive     = \_ -> return []
-      ,cs_error      = \_ -> []
-      ,cs_ifThenElse = \_ -> \a -> \b -> a++b
-      ,cs_defines    = []
-      }
