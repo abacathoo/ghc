@@ -506,6 +506,10 @@ constants =
   ,offset  [bro "CODE_OR_ENTRY",br,bm] "StgInfoTable" "type"
   ,offset  [bro "CODE_OR_ENTRY",br,bm] "StgInfoTable" "u.constr_tag"
 
+  -- CODE_OR_ENTRY= code      if TABLES_NEXT_TO_CODE
+  --                entry     if !TABLES_NEXT_TO_CODE
+  -- See [Note StgFunInfoTable/StgInfoTable] to see what's going on here
+
   ,whenDef TablesNextToCode $
     offset [cro "i.CODE_OR_ENTRY",cr,cm] "StgFunInfoTable" "f.slow_apply_offset"
   ,whenNotDef TablesNextToCode $
@@ -514,10 +518,6 @@ constants =
   ,offset  [bro "i.CODE_OR_ENTRY",br,bm] "StgFunInfoTable" "f.arity"
   ,offset  [cro "i.CODE_OR_ENTRY",cr,cm] "StgFunInfoTable" "f.b.bitmap"
   ])
-  -- Note [CODE_OR_ENTRY]
-  -- CODE_OR_ENTRY= code      if TABLES_NEXT_TO_CODE
-  --                entry     otherwise
-
      ++ map (mkSensitiveTo []) (concat
   [lit [Cmm] "StgFunInfoTable_slow_apply"
     ["#ifdef TABLES_NEXT_TO_CODE"
@@ -535,6 +535,8 @@ constants =
      ,"  | tablesNextToCode dflags = ptr"
      ,"  | otherwise = " ++ mkLoad "StgInfoTable_entry"
      ]
+
+-- [Note StgFunInfoTable/StgInfoTable]
 -------------------------------------------------------------------------
 -- When TABLES_NEXT_TO_CODE                                            --
 --                                                                     --
@@ -660,13 +662,13 @@ newtype CExpr = CExpr     String
 newtype CPPExpr = CPPExpr String
 data Target = Haskell | Cmm deriving Eq
 
-[Add sensitivity]
-To add sensitivity to a new CPP Define, modify the:
-  * Define data type
-  * allDefines function
-  * showDefine function
-
-Now you will be able to add your Define to
+----------------------------------------------------------------------
+-- [Add sensitivity]                                                --
+-- To add sensitivity to a new CPP Define, modify the:              --
+--   * Define data type                                             --
+--   * allDefines function                                          --
+--   * showDefine function                                          --
+----------------------------------------------------------------------
 
 data Define = Profiling | TablesNextToCode deriving (Eq, Show, Ord)
 
