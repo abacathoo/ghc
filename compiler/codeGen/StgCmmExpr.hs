@@ -29,10 +29,10 @@ import StgCmmClosure
 
 import StgSyn
 
+import CmmUtils
 import MkGraph
 import BlockId
 import Cmm
-import CmmInfo
 import CoreSyn
 import DataCon
 import ForeignCall
@@ -557,7 +557,11 @@ cgAlts gc_plan bndr (AlgAlt tycon) alts
                    let -- Note that ptr _always_ has tag 1
                        -- when the family size is big enough
                        untagged_ptr = cmmRegOffB bndr_reg (-1)
-                       tag_expr = getConstrTag dflags (untagged_ptr)
+                       tag_expr = cmmToWord dflags
+                                $ lOAD_StgInfoTable_constr_tag dflags
+                                $ lOAD_StgClosure_info dflags untagged_ptr
+
+
                    emitSwitch tag_expr branches mb_deflt 0 (fam_sz - 1)
                    return AssignedDirectly }
 
@@ -795,7 +799,8 @@ emitEnter fun = do
       -- Right now, we do what the old codegen did, and omit the tag
       -- test, just generating an enter.
       Return _ -> do
-        { let entry = entryCode dflags $ closureInfoPtr dflags $ CmmReg nodeReg
+        { let entry = lOAD_StgInfoTable_entry dflags
+                    $ lOAD_StgClosure_info dflags $ CmmReg nodeReg
         ; emit $ mkJump dflags NativeNodeCall entry
                         [cmmUntag dflags fun] updfr_off
         ; return AssignedDirectly
@@ -837,7 +842,8 @@ emitEnter fun = do
          -- refer to fun via nodeReg after the copyout, to avoid having
          -- both live simultaneously; this sometimes enables fun to be
          -- inlined in the RHS of the R1 assignment.
-       ; let entry = entryCode dflags (closureInfoPtr dflags (CmmReg nodeReg))
+       ; let entry = lOAD_StgInfoTable_entry dflags
+                   $ lOAD_StgClosure_info dflags $ CmmReg nodeReg
              the_call = toCall entry (Just lret) updfr_off off outArgs regs
        ; emit $
            copyout <*>

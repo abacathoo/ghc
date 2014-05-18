@@ -32,7 +32,7 @@ INFO_TABLE_RET ( stg_upd_frame, UPDATE_FRAME,
     ASSERT(HpAlloc == 0); // Note [HpAlloc]
 
     /* ToDo: it might be a PAP, so we should check... */
-    TICK_UPD_CON_IN_NEW(sizeW_fromITBL(%GET_STD_INFO(updatee)));
+    TICK_UPD_CON_IN_NEW(sizeW_fromITBL(StgClosure_info(updatee)));
 
     updateWithIndirection(updatee, ret, return (ret));
 }

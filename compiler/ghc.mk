@@ -37,12 +37,12 @@ compiler/stage3/package-data.mk : compiler/stage3/build/Config.hs
 compiler/stage1/build/PlatformConstants.o: $(includes_GHCCONSTANTS_HASKELL_TYPE)
 compiler/stage2/build/PlatformConstants.o: $(includes_GHCCONSTANTS_HASKELL_TYPE)
 compiler/stage3/build/PlatformConstants.o: $(includes_GHCCONSTANTS_HASKELL_TYPE)
-compiler/stage1/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_EXPORTS)
-compiler/stage2/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_EXPORTS)
-compiler/stage3/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_EXPORTS)
-compiler/stage1/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_WRAPPERS)
-compiler/stage2/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_WRAPPERS)
-compiler/stage3/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_WRAPPERS)
+compiler/stage1/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_DFLAGS)
+compiler/stage2/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_DFLAGS)
+compiler/stage3/build/DynFlags.o: $(includes_GHCCONSTANTS_HASKELL_DFLAGS)
+compiler/stage1/build/CmmUtils.o: $(includes_GHCCONSTANTS_HASKELL_CODEGEN)
+compiler/stage2/build/CmmUtils.o: $(includes_GHCCONSTANTS_HASKELL_CODEGEN)
+compiler/stage3/build/CmmUtils.o: $(includes_GHCCONSTANTS_HASKELL_CODEGEN)
 endif
 
 compiler/stage%/build/Config.hs : mk/config.mk mk/project.mk | $$(dir $$@)/.
@@ -478,7 +478,6 @@ compiler_stage2_dll0_MODULES = \
 	Cmm \
 	CmmCallConv \
 	CmmExpr \
-	CmmInfo \
 	CmmMachOp \
 	CmmNode \
 	CmmType \
@@ -599,7 +598,6 @@ compiler_stage2_dll0_MODULES = \
 	StgCmmTicky \
 	StgCmmUtils \
 	StgSyn \
-	Stream \
 	StringBuffer \
 	TcEvidence \
 	TcIface \
@@ -684,8 +682,8 @@ COMPILER_INCLUDES_DEPS += $(includes_H_CONFIG)
 COMPILER_INCLUDES_DEPS += $(includes_H_PLATFORM)
 COMPILER_INCLUDES_DEPS += $(includes_GHCCONSTANTS)
 COMPILER_INCLUDES_DEPS += $(includes_GHCCONSTANTS_HASKELL_TYPE)
-COMPILER_INCLUDES_DEPS += $(includes_GHCCONSTANTS_HASKELL_WRAPPERS)
-COMPILER_INCLUDES_DEPS += $(includes_GHCCONSTANTS_HASKELL_EXPORTS)
+COMPILER_INCLUDES_DEPS += $(includes_GHCCONSTANTS_HASKELL_DFLAGS)
+COMPILER_INCLUDES_DEPS += $(includes_GHCCONSTANTS_HASKELL_CODEGEN)
 COMPILER_INCLUDES_DEPS += $(includes_DERIVEDCONSTANTS)
 
 $(compiler_stage1_depfile_haskell) : $(COMPILER_INCLUDES_DEPS) $(PRIMOP_BITS_STAGE1)

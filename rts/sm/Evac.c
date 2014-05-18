@@ -391,7 +391,7 @@ loop:
       switch (info->type) {
 
       case THUNK_STATIC:
-	  if (info->srt_bitmap != 0) {
+	  if (info->u.srt_bitmap != 0) {
 	      if (*THUNK_STATIC_LINK((StgClosure *)q) == NULL) {
 #ifndef THREADED_RTS
 		  *THUNK_STATIC_LINK((StgClosure *)q) = gct->static_objects;
@@ -410,7 +410,7 @@ loop:
 	  return;
 
       case FUN_STATIC:
-	  if (info->srt_bitmap != 0 &&
+	  if (info->u.srt_bitmap != 0 &&
 	      *FUN_STATIC_LINK((StgClosure *)q) == NULL) {
 #ifndef THREADED_RTS
               *FUN_STATIC_LINK((StgClosure *)q) = gct->static_objects;

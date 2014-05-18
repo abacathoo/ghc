@@ -366,7 +366,7 @@ rts_getBool (HaskellObj p)
     StgInfoTable *info;
 
     info = get_itbl((StgClosure *)UNTAG_CLOSURE(p));
-    if (info->srt_bitmap == 0) { // srt_bitmap is the constructor tag
+    if (info->u.constr_tag == 0) {
 	return 0;
     } else {
 	return 1;

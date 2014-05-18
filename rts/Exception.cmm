@@ -83,7 +83,7 @@ INFO_TABLE_RET(stg_unmaskAsyncExceptionszh_ret, RET_SMALL, W_ info_ptr)
                 LOAD_THREAD_STATE();
                 ASSERT(StgTSO_what_next(CurrentTSO) == ThreadRunGHC::I16);
                 R1 = ret;
-                jump %ENTRY_CODE(Sp(0)) [R1];
+                jump StgInfoTable_entry(Sp(0)) [R1];
             }
         }
         else {
@@ -98,7 +98,7 @@ INFO_TABLE_RET(stg_unmaskAsyncExceptionszh_ret, RET_SMALL, W_ info_ptr)
 
     Sp_adj(1);
     R1 = ret;
-    jump %ENTRY_CODE(Sp(0)) [R1];
+    jump StgInfoTable_entry(Sp(0)) [R1];
 }
 
 INFO_TABLE_RET(stg_maskAsyncExceptionszh_ret, RET_SMALL, W_ info_ptr)
@@ -243,7 +243,7 @@ stg_unmaskAsyncExceptionszh /* explicit stack */
 	            LOAD_THREAD_STATE();
 	            ASSERT(StgTSO_what_next(CurrentTSO) == ThreadRunGHC::I16);
                     R1 = io;
-                    jump %ENTRY_CODE(Sp(0)) [R1];
+                    jump StgInfoTable_entry(Sp(0)) [R1];
 	        }
             } else {
                 /* we'll just call R1 directly, below */
@@ -337,7 +337,7 @@ stg_killMyself
     } else {
         LOAD_THREAD_STATE();
         ASSERT(StgTSO_what_next(CurrentTSO) == ThreadRunGHC::I16);
-        jump %ENTRY_CODE(Sp(0)) [];
+        jump StgInfoTable_entry(Sp(0)) [];
     }
 }
 

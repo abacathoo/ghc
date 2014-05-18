@@ -90,7 +90,7 @@ stg_PAP_apply /* no args => explicit stack */
   // Reload the stack 
   W_ i;
   W_ p;
-  p = pap + SIZEOF_StgHeader + OFFSET_StgPAP_payload;
+  p = pap + OFFSET_StgPAP_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -103,13 +103,13 @@ for:
   R1 = StgPAP_fun(pap);
 
 /* DEBUGGING CODE, ensures that arity 1 and 2 functions are entered tagged
-  if (TO_W_(StgFunInfoExtra_arity(%FUN_INFO(%INFO_PTR(UNTAG(R1))))) == 1 ) {
+  if (TO_W_(StgFunInfoTable_arity(StgClosure_info(UNTAG(R1)))) == 1 ) {
     if (GETTAG(R1)!=1) {
 	W_[0]=1;
     }
   }
 
-  if (TO_W_(StgFunInfoExtra_arity(%FUN_INFO(%INFO_PTR(UNTAG(R1))))) == 2 ) {
+  if (TO_W_(StgFunInfoTable_arity(StgClosure_info(UNTAG(R1)))) == 2 ) {
     if (GETTAG(R1)!=2) {
 	W_[0]=1;
     }
@@ -120,17 +120,17 @@ for:
   TICK_ENT_VIA_NODE();
 
 #ifdef NO_ARG_REGS
-  jump %GET_ENTRY(UNTAG(R1)) [R1];
+  jump StgInfoTable_entry(StgClosure_info(UNTAG(R1))) [R1];
 #else
       W_ info;
-      info = %GET_FUN_INFO(UNTAG(R1));
+      info = StgClosure_info(UNTAG(R1));
       W_ type;
-      type = TO_W_(StgFunInfoExtra_fun_type(info));
+      type = TO_W_(StgFunInfoTable_fun_type(info));
       if (type == ARG_GEN) {
-          jump StgFunInfoExtra_slow_apply(info) [R1];
+          jump StgFunInfoTable_slow_apply(info) [R1];
       }
       if (type == ARG_GEN_BIG) {
-          jump StgFunInfoExtra_slow_apply(info) [R1];
+          jump StgFunInfoTable_slow_apply(info) [R1];
       }
       if (type == ARG_BCO) {
 	  Sp_adj(-2);
@@ -139,7 +139,7 @@ for:
           jump stg_yield_to_interpreter [];
       }
       jump W_[stg_ap_stack_entries + 
-                WDS(TO_W_(StgFunInfoExtra_fun_type(info)))] [R1];
+                WDS(TO_W_(StgFunInfoTable_fun_type(info)))] [R1];
 #endif
 }
 
@@ -180,7 +180,7 @@ INFO_TABLE(stg_AP,/*special layout*/0,0,AP,"AP","AP")
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_payload;
+  p = ap + OFFSET_StgAP_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -196,17 +196,17 @@ for:
   TICK_ENT_VIA_NODE();
 
 #ifdef NO_ARG_REGS
-  jump %GET_ENTRY(UNTAG(R1)) [R1];
+  jump StgInfoTable_entry(StgClosure_info(UNTAG(R1))) [R1];
 #else
       W_ info;
-      info = %GET_FUN_INFO(UNTAG(R1));
+      info = StgClosure_info(UNTAG(R1));
       W_ type;
-      type = TO_W_(StgFunInfoExtra_fun_type(info));
+      type = TO_W_(StgFunInfoTable_fun_type(info));
       if (type == ARG_GEN) {
-          jump StgFunInfoExtra_slow_apply(info) [R1];
+          jump StgFunInfoTable_slow_apply(info) [R1];
       }
       if (type == ARG_GEN_BIG) {
-          jump StgFunInfoExtra_slow_apply(info) [R1];
+          jump StgFunInfoTable_slow_apply(info) [R1];
       }
       if (type == ARG_BCO) {
 	  Sp_adj(-2);
@@ -215,7 +215,7 @@ for:
           jump stg_yield_to_interpreter [];
       }
       jump W_[stg_ap_stack_entries + 
-                WDS(TO_W_(StgFunInfoExtra_fun_type(info)))] [R1];
+                WDS(TO_W_(StgFunInfoTable_fun_type(info)))] [R1];
 #endif
 }
 
@@ -249,7 +249,7 @@ INFO_TABLE(stg_AP_NOUPD,/*special layout*/0,0,AP,"AP_NOUPD","AP_NOUPD")
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_payload;
+  p = ap + OFFSET_StgAP_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -265,17 +265,17 @@ for:
   TICK_ENT_VIA_NODE();
 
 #ifdef NO_ARG_REGS
-  jump %GET_ENTRY(UNTAG(R1)) [R1];
+  jump StgInfoTable_entry(StgClosure_info(UNTAG(R1))) [R1];
 #else
       W_ info;
-      info = %GET_FUN_INFO(UNTAG(R1));
+      info = StgClosure_info(UNTAG(R1));
       W_ type;
-      type = TO_W_(StgFunInfoExtra_fun_type(info));
+      type = TO_W_(StgFunInfoTable_fun_type(info));
       if (type == ARG_GEN) {
-          jump StgFunInfoExtra_slow_apply(info) [R1];
+          jump StgFunInfoTable_slow_apply(info) [R1];
       }
       if (type == ARG_GEN_BIG) {
-          jump StgFunInfoExtra_slow_apply(info) [R1];
+          jump StgFunInfoTable_slow_apply(info) [R1];
       }
       if (type == ARG_BCO) {
 	  Sp_adj(-2);
@@ -284,7 +284,7 @@ for:
           jump stg_yield_to_interpreter [];
       }
       jump W_[stg_ap_stack_entries + 
-                WDS(TO_W_(StgFunInfoExtra_fun_type(info)))] [R1];
+                WDS(TO_W_(StgFunInfoTable_fun_type(info)))] [R1];
 #endif
 }
 
@@ -329,7 +329,7 @@ INFO_TABLE(stg_AP_STACK,/*special layout*/0,0,AP_STACK,"AP_STACK","AP_STACK")
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_STACK_payload;
+  p = ap + OFFSET_StgAP_STACK_payload;
   i = 0;
 for:
   if (i < Words) {
@@ -381,7 +381,7 @@ INFO_TABLE(stg_AP_STACK_NOUPD,/*special layout*/0,0,AP_STACK,
   // Reload the stack
   W_ i;
   W_ p;
-  p = ap + SIZEOF_StgHeader + OFFSET_StgAP_STACK_payload;
+  p = ap + OFFSET_StgAP_STACK_payload;
   i = 0;
 for:
   if (i < Words) {

@@ -31,7 +31,6 @@ import StgCmmProf ( curCCS )
 import CmmExpr
 import CLabel
 import MkGraph
-import SMRep
 import CostCentre
 import Module
 import DataCon
@@ -192,7 +191,7 @@ buildDynCon' dflags platform binder _ _cc con [arg]
   , val >= fromIntegral (mIN_INTLIKE dflags) -- ...ditto...
   = do  { let intlike_lbl   = mkCmmClosureLabel rtsPackageId (fsLit "stg_INTLIKE")
               val_int = fromIntegral val :: Int
-              offsetW = (val_int - mIN_INTLIKE dflags) * (fixedHdrSizeW dflags + 1)
+              offsetW = (val_int - mIN_INTLIKE dflags) * (sIZEOFW_StgHeader dflags + 1)
                 -- INTLIKE closures consist of a header and one word payload
               intlike_amode = cmmLabelOffW dflags intlike_lbl offsetW
         ; return ( litIdInfo dflags binder (mkConLFInfo con) intlike_amode
@@ -206,7 +205,7 @@ buildDynCon' dflags platform binder _ _cc con [arg]
   , val_int <= mAX_CHARLIKE dflags
   , val_int >= mIN_CHARLIKE dflags
   = do  { let charlike_lbl   = mkCmmClosureLabel rtsPackageId (fsLit "stg_CHARLIKE")
-              offsetW = (val_int - mIN_CHARLIKE dflags) * (fixedHdrSizeW dflags + 1)
+              offsetW = (val_int - mIN_CHARLIKE dflags) * (sIZEOFW_StgHeader dflags + 1)
                 -- CHARLIKE closures consist of a header and one word payload
               charlike_amode = cmmLabelOffW dflags charlike_lbl offsetW
         ; return ( litIdInfo dflags binder (mkConLFInfo con) charlike_amode

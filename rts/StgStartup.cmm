@@ -90,7 +90,7 @@ stg_returnToStackTop /* no args: explicit stack layout */
 {
   LOAD_THREAD_STATE();
   CHECK_SENSIBLE_REGS();
-  jump %ENTRY_CODE(Sp(0)) [];
+  jump StgInfoTable_entry(Sp(0)) [];
 }
 
 stg_returnToSched /* no args: explicit stack layout */

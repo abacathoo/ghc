@@ -467,7 +467,7 @@ tickyAllocHeap genuine hp
           if hp == 0 then []
           else let !bytes = wORD_SIZE dflags * hp in [
             -- Bump the allocation total in the closure's StgEntCounter
-            addToMem (rEP_StgEntCounter_allocs dflags)
+            addToMem (cmmBits $ widthFromBytes $ rEP_StgEntCounter_allocs dflags)
                      (CmmLit (cmmLabelOffB ticky_ctr (oFFSET_StgEntCounter_allocs dflags)))
                      bytes,
             -- Bump the global allocation total ALLOC_HEAP_tot

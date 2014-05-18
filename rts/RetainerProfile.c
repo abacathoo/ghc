@@ -328,28 +328,28 @@ find_ptrs( stackPos *info )
 static INLINE void
 init_srt_fun( stackPos *info, StgFunInfoTable *infoTable )
 {
-    if (infoTable->i.srt_bitmap == (StgHalfWord)(-1)) {
+    if (infoTable->i.u.srt_bitmap == (StgHalfWord)(-1)) {
 	info->type = posTypeLargeSRT;
 	info->next.large_srt.srt = (StgLargeSRT *)GET_FUN_SRT(infoTable);
 	info->next.large_srt.offset = 0;
     } else {
 	info->type = posTypeSRT;
 	info->next.srt.srt = (StgClosure **)GET_FUN_SRT(infoTable);
-	info->next.srt.srt_bitmap = infoTable->i.srt_bitmap;
+	info->next.srt.srt_bitmap = infoTable->i.u.srt_bitmap;
     }
 }
 
 static INLINE void
 init_srt_thunk( stackPos *info, StgThunkInfoTable *infoTable )
 {
-    if (infoTable->i.srt_bitmap == (StgHalfWord)(-1)) {
+    if (infoTable->i.u.srt_bitmap == (StgHalfWord)(-1)) {
 	info->type = posTypeLargeSRT;
 	info->next.large_srt.srt = (StgLargeSRT *)GET_SRT(infoTable);
 	info->next.large_srt.offset = 0;
     } else {
 	info->type = posTypeSRT;
 	info->next.srt.srt = (StgClosure **)GET_SRT(infoTable);
-	info->next.srt.srt_bitmap = infoTable->i.srt_bitmap;
+	info->next.srt.srt_bitmap = infoTable->i.u.srt_bitmap;
     }
 }
 
@@ -579,7 +579,7 @@ push( StgClosure *c, retainer c_child_r, StgClosure **first_child )
 	break;
 
     case FUN_STATIC:      // *c is a heap object.
-	ASSERT(get_itbl(c)->srt_bitmap != 0);
+	ASSERT(get_itbl(c)->u.srt_bitmap != 0);
     case FUN_0_1:
     case FUN_0_2:
     fun_srt_only:
@@ -591,7 +591,7 @@ push( StgClosure *c, retainer c_child_r, StgClosure **first_child )
 
     // SRT only
     case THUNK_STATIC:
-	ASSERT(get_itbl(c)->srt_bitmap != 0);
+	ASSERT(get_itbl(c)->u.srt_bitmap != 0);
     case THUNK_0_1:
     case THUNK_0_2:
     thunk_srt_only:
@@ -1337,7 +1337,7 @@ retainStack( StgClosure *c, retainer c_child_r,
 	    p = retain_small_bitmap(p, size, bitmap, c, c_child_r);
 
 	follow_srt:
-	    retainSRT((StgClosure **)GET_SRT(info), info->i.srt_bitmap, c, c_child_r);
+	    retainSRT((StgClosure **)GET_SRT(info), info->i.u.srt_bitmap, c, c_child_r);
 	    continue;
 
 	case RET_BCO: {
@@ -1571,7 +1571,7 @@ inner_loop:
 	goto loop;
     case THUNK_STATIC:
     case FUN_STATIC:
-	if (get_itbl(c)->srt_bitmap == 0) {
+	if (get_itbl(c)->u.srt_bitmap == 0) {
 	    // No need to compute the retainer set; no dynamic objects
 	    // are reachable from *c.
 	    //
