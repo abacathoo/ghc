@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 --------------------------------------------------
 -- Types for backtracing                        --
 --                                              --
