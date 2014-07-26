@@ -2,16 +2,19 @@
 % (c) The University of Glasgow, 2006
 %
 \begin{code}
+{-# LANGUAGE CPP #-}
+
 -- | Package manipulation
 module Packages (
         module PackageConfig,
 
         -- * The PackageConfigMap
         PackageConfigMap, emptyPackageConfigMap, lookupPackage,
-        extendPackageConfigMap, dumpPackages,
+        extendPackageConfigMap, dumpPackages, simpleDumpPackages,
 
         -- * Reading the package config, and processing cmdline args
         PackageState(..),
+        ModuleConf(..),
         initPackages,
         getPackageDetails,
         lookupModuleInAllPackages, lookupModuleWithSuggestions,
@@ -27,6 +30,7 @@ module Packages (
 
         collectIncludeDirs, collectLibraryPaths, collectLinkOpts,
         packageHsLibs,
+        ModuleExport(..),
 
         -- * Utils
         isDllName
@@ -50,6 +54,7 @@ import System.Environment ( getEnv )
 import Distribution.InstalledPackageInfo
 import Distribution.InstalledPackageInfo.Binary
 import Distribution.Package hiding (PackageId,depends)
+import Distribution.ModuleExport
 import FastString
 import ErrUtils         ( debugTraceMsg, putMsg, MsgDoc )
 import Exception
@@ -107,29 +112,60 @@ import qualified Data.Set as Set
 -- When compiling A, we record in B's Module value whether it's
 -- in a different DLL, by setting the DLL flag.
 
+-- | The result of performing a lookup on moduleToPkgConfAll, this
+-- is one possible provider of a module.
+data ModuleConf = ModConf {
+  -- | The original name of the module
+  modConfName :: ModuleName,
+  -- | The original package (config) of the module
+  modConfPkg :: PackageConfig,
+  -- | Does the original package expose this module to its clients?  This
+  -- is cached result of whether or not the module name is in
+  -- exposed-modules or reexported-modules in the package config.  While
+  -- this isn't actually how we want to figure out if a module is visible,
+  -- this is important for error messages.
+  modConfExposed :: Bool,
+  -- | Is the module visible to our current compilation?  Interestingly,
+  -- this is not the same as if it was exposed: if the package is hidden
+  -- then exposed modules are not visible.  However, if another exposed
+  -- package reexports the module in question, it's now visible!  You
+  -- can't tell this just by looking at the original name, so we
+  -- record the calculation here.
+  modConfVisible :: Bool
+  }
+
+-- | Map from 'PackageId' (used for documentation)
+type PackageIdMap = UniqFM
+
+-- | Map from 'Module' to 'PackageId' to 'ModuleConf', see 'moduleToPkgConfAll'
+type ModuleToPkgConfAll = UniqFM (PackageIdMap ModuleConf)
+
 data PackageState = PackageState {
-  pkgIdMap              :: PackageConfigMap, -- PackageId   -> PackageConfig
+  pkgIdMap              :: PackageConfigMap, -- PackageKey   -> PackageConfig
         -- The exposed flags are adjusted according to -package and
         -- -hide-package flags, and -ignore-package removes packages.
 
-  preloadPackages      :: [PackageId],
+  preloadPackages      :: [PackageKey],
         -- The packages we're going to link in eagerly.  This list
         -- should be in reverse dependency order; that is, a package
         -- is always mentioned before the packages it depends on.
 
-  moduleToPkgConfAll    :: UniqFM [(PackageConfig,Bool)], -- ModuleEnv mapping
-        -- Derived from pkgIdMap.
-        -- Maps Module to (pkgconf,exposed), where pkgconf is the
-        -- PackageConfig for the package containing the module, and
-        -- exposed is True if the package exposes that module.
+  -- | ModuleEnv mapping, derived from 'pkgIdMap'.
+  -- Maps 'Module' to an original module which is providing the module name.
+  -- Since the module may be provided by multiple packages, this result
+  -- is further recorded in a map of the original package IDs to
+  -- module information.  The 'modSummaryPkgConf' should agree with
+  -- this key.  Generally, 'modSummaryName' will be the same as the
+  -- module key, unless there is renaming.
+  moduleToPkgConfAll    :: ModuleToPkgConfAll,
 
   installedPackageIdMap :: InstalledPackageIdMap
   }
 
--- | A PackageConfigMap maps a 'PackageId' to a 'PackageConfig'
+-- | A PackageConfigMap maps a 'PackageKey' to a 'PackageConfig'
 type PackageConfigMap = UniqFM PackageConfig
 
-type InstalledPackageIdMap = Map InstalledPackageId PackageId
+type InstalledPackageIdMap = Map InstalledPackageId PackageKey
 
 type InstalledPackageIndex = Map InstalledPackageId PackageConfig
 
@@ -137,7 +173,7 @@ emptyPackageConfigMap :: PackageConfigMap
 emptyPackageConfigMap = emptyUFM
 
 -- | Find the package we know about with the given id (e.g. \"foo-1.0\"), if any
-lookupPackage :: PackageConfigMap -> PackageId -> Maybe PackageConfig
+lookupPackage :: PackageConfigMap -> PackageKey -> Maybe PackageConfig
 lookupPackage = lookupUFM
 
 extendPackageConfigMap
@@ -148,7 +184,7 @@ extendPackageConfigMap pkg_map new_pkgs
 
 -- | Looks up the package with the given id in the package state, panicing if it is
 -- not found
-getPackageDetails :: PackageState -> PackageId -> PackageConfig
+getPackageDetails :: PackageState -> PackageKey -> PackageConfig
 getPackageDetails ps pid = expectJust "getPackageDetails" (lookupPackage (pkgIdMap ps) pid)
 
 -- ----------------------------------------------------------------------------
@@ -167,7 +203,7 @@ getPackageDetails ps pid = expectJust "getPackageDetails" (lookupPackage (pkgIdM
 -- 'packageFlags' field of the 'DynFlags', and it will update the
 -- 'pkgState' in 'DynFlags' and return a list of packages to
 -- link in.
-initPackages :: DynFlags -> IO (DynFlags, [PackageId])
+initPackages :: DynFlags -> IO (DynFlags, [PackageKey])
 initPackages dflags = do
   pkg_db <- case pkgDatabase dflags of
                 Nothing -> readPackageConfigs dflags
@@ -473,14 +509,15 @@ findWiredInPackages dflags pkgs = do
   --
   let
         wired_in_pkgids :: [String]
-        wired_in_pkgids = map packageIdString
-                          [ primPackageId,
-                            integerPackageId,
-                            basePackageId,
-                            rtsPackageId,
-                            thPackageId,
-                            dphSeqPackageId,
-                            dphParPackageId ]
+        wired_in_pkgids = map packageKeyString
+                          [ primPackageKey,
+                            integerPackageKey,
+                            basePackageKey,
+                            rtsPackageKey,
+                            thPackageKey,
+                            thisGhcPackageKey,
+                            dphSeqPackageKey,
+                            dphParPackageKey ]
 
         matches :: PackageConfig -> String -> Bool
         pc `matches` pid = display (pkgName (sourcePackageId pc)) == pid
@@ -667,11 +704,11 @@ depClosure index ipids = closure Map.empty ipids
 mkPackageState
     :: DynFlags
     -> [PackageConfig]          -- initial database
-    -> [PackageId]              -- preloaded packages
-    -> PackageId                -- this package
+    -> [PackageKey]              -- preloaded packages
+    -> PackageKey                -- this package
     -> IO (PackageState,
-           [PackageId],         -- new packages to preload
-           PackageId) -- this package, might be modified if the current
+           [PackageKey],         -- new packages to preload
+           PackageKey) -- this package, might be modified if the current
                       -- package is a wired-in package.
 
 mkPackageState dflags pkgs0 preload0 this_package = do
@@ -794,7 +831,7 @@ mkPackageState dflags pkgs0 preload0 this_package = do
       -- add base & rts to the preload packages
       basicLinkedPackages
        | gopt Opt_AutoLinkPackages dflags
-          = filter (flip elemUFM pkg_db) [basePackageId, rtsPackageId]
+          = filter (flip elemUFM pkg_db) [basePackageKey, rtsPackageKey]
        | otherwise = []
       -- but in any case remove the current package from the set of
       -- preloaded packages so that base/rts does not end up in the
@@ -808,7 +845,7 @@ mkPackageState dflags pkgs0 preload0 this_package = do
 
   let pstate = PackageState{ preloadPackages     = dep_preload,
                              pkgIdMap            = pkg_db,
-                             moduleToPkgConfAll  = mkModuleMap pkg_db,
+                             moduleToPkgConfAll  = mkModuleMap pkg_db ipid_map,
                              installedPackageIdMap = ipid_map
                            }
 
@@ -816,23 +853,43 @@ mkPackageState dflags pkgs0 preload0 this_package = do
 
 
 -- -----------------------------------------------------------------------------
--- Make the mapping from module to package info
+-- | Makes the mapping from module to package info for 'moduleToPkgConfAll'
 
 mkModuleMap
   :: PackageConfigMap
-  -> UniqFM [(PackageConfig, Bool)]
-mkModuleMap pkg_db = foldr extend_modmap emptyUFM pkgids
+  -> InstalledPackageIdMap
+  -> ModuleToPkgConfAll
+mkModuleMap pkg_db ipid_map = foldr extend_modmap emptyUFM pkgids
   where
-        pkgids = map packageConfigId (eltsUFM pkg_db)
+    pkgids = map packageConfigId (eltsUFM pkg_db)
 
-        extend_modmap pkgid modmap =
-                addListToUFM_C (++) modmap
-                   ([(m, [(pkg, True)])  | m <- exposed_mods] ++
-                    [(m, [(pkg, False)]) | m <- hidden_mods])
-          where
-                pkg = expectJust "mkModuleMap" (lookupPackage pkg_db pkgid)
-                exposed_mods = exposedModules pkg
-                hidden_mods  = hiddenModules pkg
+    extend_modmap pkgid modmap = addListToUFM_C (plusUFM_C merge) modmap es
+      where -- Invariant: m == m' && pkg == pkg' && e == e'
+            --              && (e || not (v || v'))
+            -- Some notes about the assert. Merging only ever occurs when
+            -- we find a reexport.  The interesting condition:
+            --      e || not (v || v')
+            -- says that a non-exposed module cannot ever become visible.
+            -- However, an invisible (but exported) module may become
+            -- visible when it is reexported by a visible package,
+            -- which is why we merge visibility using logical OR.
+            merge a b = a { modConfVisible =
+                                   modConfVisible a || modConfVisible b }
+            es = [(m, unitUFM pkgid  (ModConf m pkg True (exposed pkg)))
+                 | m <- exposed_mods] ++
+                 [(m, unitUFM pkgid  (ModConf m pkg False False))
+                 | m <- hidden_mods] ++
+                 [(m, unitUFM pkgid' (ModConf m' pkg' True (exposed pkg)))
+                 | ModuleExport{ exportName = m
+                               , exportCachedTrueOrig = Just (ipid', m')}
+                        <- reexported_mods
+                 , Just pkgid' <- [Map.lookup ipid' ipid_map]
+                 , let pkg' = pkg_lookup pkgid' ]
+            pkg = pkg_lookup pkgid
+            pkg_lookup = expectJust "mkModuleMap" . lookupPackage pkg_db
+            exposed_mods = exposedModules pkg
+            reexported_mods = reexportedModules pkg
+            hidden_mods  = hiddenModules pkg
 
 pprSPkg :: PackageConfig -> SDoc
 pprSPkg p = text (display (sourcePackageId p))
@@ -852,7 +909,7 @@ pprIPkg p = text (display (installedPackageId p))
 -- use.
 
 -- | Find all the include directories in these and the preload packages
-getPackageIncludePath :: DynFlags -> [PackageId] -> IO [String]
+getPackageIncludePath :: DynFlags -> [PackageKey] -> IO [String]
 getPackageIncludePath dflags pkgs =
   collectIncludeDirs `fmap` getPreloadPackagesAnd dflags pkgs
 
@@ -860,7 +917,7 @@ collectIncludeDirs :: [PackageConfig] -> [FilePath]
 collectIncludeDirs ps = nub (filter notNull (concatMap includeDirs ps))
 
 -- | Find all the library paths in these and the preload packages
-getPackageLibraryPath :: DynFlags -> [PackageId] -> IO [String]
+getPackageLibraryPath :: DynFlags -> [PackageKey] -> IO [String]
 getPackageLibraryPath dflags pkgs =
   collectLibraryPaths `fmap` getPreloadPackagesAnd dflags pkgs
 
@@ -869,7 +926,7 @@ collectLibraryPaths ps = nub (filter notNull (concatMap libraryDirs ps))
 
 -- | Find all the link options in these and the preload packages,
 -- returning (package hs lib options, extra library options, other flags)
-getPackageLinkOpts :: DynFlags -> [PackageId] -> IO ([String], [String], [String])
+getPackageLinkOpts :: DynFlags -> [PackageKey] -> IO ([String], [String], [String])
 getPackageLinkOpts dflags pkgs =
   collectLinkOpts dflags `fmap` getPreloadPackagesAnd dflags pkgs
 
@@ -917,19 +974,19 @@ packageHsLibs dflags p = map (mkDynName . addSuffix) (hsLibraries p)
                     | otherwise = '_':t
 
 -- | Find all the C-compiler options in these and the preload packages
-getPackageExtraCcOpts :: DynFlags -> [PackageId] -> IO [String]
+getPackageExtraCcOpts :: DynFlags -> [PackageKey] -> IO [String]
 getPackageExtraCcOpts dflags pkgs = do
   ps <- getPreloadPackagesAnd dflags pkgs
   return (concatMap ccOptions ps)
 
 -- | Find all the package framework paths in these and the preload packages
-getPackageFrameworkPath  :: DynFlags -> [PackageId] -> IO [String]
+getPackageFrameworkPath  :: DynFlags -> [PackageKey] -> IO [String]
 getPackageFrameworkPath dflags pkgs = do
   ps <- getPreloadPackagesAnd dflags pkgs
   return (nub (filter notNull (concatMap frameworkDirs ps)))
 
 -- | Find all the package frameworks in these and the preload packages
-getPackageFrameworks  :: DynFlags -> [PackageId] -> IO [String]
+getPackageFrameworks  :: DynFlags -> [PackageKey] -> IO [String]
 getPackageFrameworks dflags pkgs = do
   ps <- getPreloadPackagesAnd dflags pkgs
   return (concatMap frameworks ps)
@@ -937,18 +994,20 @@ getPackageFrameworks dflags pkgs = do
 -- -----------------------------------------------------------------------------
 -- Package Utils
 
--- | Takes a 'Module', and if the module is in a package returns
--- @(pkgconf, exposed)@ where pkgconf is the PackageConfig for that package,
--- and exposed is @True@ if the package exposes the module.
-lookupModuleInAllPackages :: DynFlags -> ModuleName -> [(PackageConfig,Bool)]
+-- | Takes a 'ModuleName', and if the module is in any package returns
+-- a map of package IDs to 'ModuleConf', describing where the module lives
+-- and whether or not it is exposed.
+lookupModuleInAllPackages :: DynFlags
+                          -> ModuleName
+                          -> PackageIdMap ModuleConf
 lookupModuleInAllPackages dflags m
   = case lookupModuleWithSuggestions dflags m of
       Right pbs -> pbs
-      Left  _   -> []
+      Left  _   -> emptyUFM
 
 lookupModuleWithSuggestions
   :: DynFlags -> ModuleName
-  -> Either [Module] [(PackageConfig,Bool)]
+  -> Either [Module] (PackageIdMap ModuleConf)
          -- Lookup module in all packages
          -- Right pbs   =>   found in pbs
          -- Left  ms    =>   not found; but here are sugestions
@@ -959,18 +1018,20 @@ lookupModuleWithSuggestions dflags m
   where
     pkg_state = pkgState dflags
     suggestions
-      | gopt Opt_HelpfulErrors dflags = fuzzyLookup (moduleNameString m) all_mods
-      | otherwise                     = []
+      | gopt Opt_HelpfulErrors dflags =
+           fuzzyLookup (moduleNameString m) all_mods
+      | otherwise = []
 
     all_mods :: [(String, Module)]     -- All modules
     all_mods = [ (moduleNameString mod_nm, mkModule pkg_id mod_nm)
                | pkg_config <- eltsUFM (pkgIdMap pkg_state)
                , let pkg_id = packageConfigId pkg_config
-               , mod_nm <- exposedModules pkg_config ]
+               , mod_nm <- exposedModules pkg_config
+                        ++ map exportName (reexportedModules pkg_config) ]
 
 -- | Find all the 'PackageConfig' in both the preload packages from 'DynFlags' and corresponding to the list of
 -- 'PackageConfig's
-getPreloadPackagesAnd :: DynFlags -> [PackageId] -> IO [PackageConfig]
+getPreloadPackagesAnd :: DynFlags -> [PackageKey] -> IO [PackageConfig]
 getPreloadPackagesAnd dflags pkgids =
   let
       state   = pkgState dflags
@@ -986,9 +1047,9 @@ getPreloadPackagesAnd dflags pkgids =
 -- in reverse dependency order (a package appears before those it depends on).
 closeDeps :: DynFlags
           -> PackageConfigMap
-          -> Map InstalledPackageId PackageId
-          -> [(PackageId, Maybe PackageId)]
-          -> IO [PackageId]
+          -> Map InstalledPackageId PackageKey
+          -> [(PackageKey, Maybe PackageKey)]
+          -> IO [PackageKey]
 closeDeps dflags pkg_map ipid_map ps
     = throwErr dflags (closeDepsErr pkg_map ipid_map ps)
 
@@ -999,22 +1060,22 @@ throwErr dflags m
                 Succeeded r -> return r
 
 closeDepsErr :: PackageConfigMap
-             -> Map InstalledPackageId PackageId
-             -> [(PackageId,Maybe PackageId)]
-             -> MaybeErr MsgDoc [PackageId]
+             -> Map InstalledPackageId PackageKey
+             -> [(PackageKey,Maybe PackageKey)]
+             -> MaybeErr MsgDoc [PackageKey]
 closeDepsErr pkg_map ipid_map ps = foldM (add_package pkg_map ipid_map) [] ps
 
 -- internal helper
 add_package :: PackageConfigMap
-            -> Map InstalledPackageId PackageId
-            -> [PackageId]
-            -> (PackageId,Maybe PackageId)
-            -> MaybeErr MsgDoc [PackageId]
+            -> Map InstalledPackageId PackageKey
+            -> [PackageKey]
+            -> (PackageKey,Maybe PackageKey)
+            -> MaybeErr MsgDoc [PackageKey]
 add_package pkg_db ipid_map ps (p, mb_parent)
   | p `elem` ps = return ps     -- Check if we've already added this package
   | otherwise =
       case lookupPackage pkg_db p of
-        Nothing -> Failed (missingPackageMsg (packageIdString p) <>
+        Nothing -> Failed (missingPackageMsg (packageKeyString p) <>
                            missingDependencyMsg mb_parent)
         Just pkg -> do
            -- Add the package's dependents also
@@ -1034,22 +1095,34 @@ missingPackageErr dflags p
 missingPackageMsg :: String -> SDoc
 missingPackageMsg p = ptext (sLit "unknown package:") <+> text p
 
-missingDependencyMsg :: Maybe PackageId -> SDoc
+missingDependencyMsg :: Maybe PackageKey -> SDoc
 missingDependencyMsg Nothing = empty
 missingDependencyMsg (Just parent)
-  = space <> parens (ptext (sLit "dependency of") <+> ftext (packageIdFS parent))
+  = space <> parens (ptext (sLit "dependency of") <+> ftext (packageKeyFS parent))
 
 -- -----------------------------------------------------------------------------
 
 -- | Will the 'Name' come from a dynamically linked library?
-isDllName :: DynFlags -> PackageId -> Module -> Name -> Bool
+isDllName :: DynFlags -> PackageKey -> Module -> Name -> Bool
 -- Despite the "dll", I think this function just means that
 -- the synbol comes from another dynamically-linked package,
 -- and applies on all platforms, not just Windows
-isDllName dflags this_pkg this_mod name
+isDllName dflags _this_pkg this_mod name
   | gopt Opt_Static dflags = False
   | Just mod <- nameModule_maybe name
-    = if modulePackageId mod /= this_pkg
+    -- Issue #8696 - when GHC is dynamically linked, it will attempt
+    -- to load the dynamic dependencies of object files at compile
+    -- time for things like QuasiQuotes or
+    -- TemplateHaskell. Unfortunately, this interacts badly with
+    -- intra-package linking, because we don't generate indirect
+    -- (dynamic) symbols for intra-package calls. This means that if a
+    -- module with an intra-package call is loaded without its
+    -- dependencies, then GHC fails to link. This is the cause of #
+    --
+    -- In the mean time, always force dynamic indirections to be
+    -- generated: when the module name isn't the module being
+    -- compiled, references are dynamic.
+    = if mod /= this_mod
       then True
       else case dllSplit dflags of
            Nothing -> False
@@ -1065,12 +1138,26 @@ isDllName dflags this_pkg this_mod name
 -- -----------------------------------------------------------------------------
 -- Displaying packages
 
--- | Show package info on console, if verbosity is >= 3
+-- | Show (very verbose) package info on console, if verbosity is >= 5
 dumpPackages :: DynFlags -> IO ()
-dumpPackages dflags
+dumpPackages = dumpPackages' showInstalledPackageInfo
+
+dumpPackages' :: (InstalledPackageInfo -> String) -> DynFlags -> IO ()
+dumpPackages' showIPI dflags
   = do let pkg_map = pkgIdMap (pkgState dflags)
        putMsg dflags $
-             vcat (map (text . showInstalledPackageInfo
+             vcat (map (text . showIPI
                              . packageConfigToInstalledPackageInfo)
                        (eltsUFM pkg_map))
+
+-- | Show simplified package info on console, if verbosity == 4.
+-- The idea is to only print package id, and any information that might
+-- be different from the package databases (exposure, trust)
+simpleDumpPackages :: DynFlags -> IO ()
+simpleDumpPackages = dumpPackages' showIPI
+    where showIPI ipi = let InstalledPackageId i = installedPackageId ipi
+                            e = if exposed ipi then "E" else " "
+                            t = if trusted ipi then "T" else " "
+                        in e ++ t ++ "  " ++ i
+
 \end{code}

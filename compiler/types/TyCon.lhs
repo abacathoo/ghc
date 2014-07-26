@@ -6,6 +6,7 @@
 The @TyCon@ datatype
 
 \begin{code}
+{-# LANGUAGE CPP, DeriveDataTypeable #-}
 
 module TyCon(
         -- * Main TyCon data types
@@ -34,14 +35,13 @@ module TyCon(
         isFunTyCon,
         isPrimTyCon,
         isTupleTyCon, isUnboxedTupleTyCon, isBoxedTupleTyCon,
-        isSynTyCon, 
+        isSynTyCon, isTypeSynonymTyCon,
         isDecomposableTyCon,
         isForeignTyCon, 
         isPromotedDataCon, isPromotedTyCon,
         isPromotedDataCon_maybe, isPromotedTyCon_maybe,
         promotableTyCon_maybe, promoteTyCon,
 
-        isInjectiveTyCon,
         isDataTyCon, isProductTyCon, isDataProductTyCon_maybe,
         isEnumerationTyCon,
         isNewTyCon, isAbstractTyCon,
@@ -73,7 +73,7 @@ module TyCon(
         synTyConDefn_maybe, synTyConRhs_maybe, 
         tyConExtName,           -- External name for foreign types
         algTyConRhs,
-        newTyConRhs, newTyConEtadRhs, unwrapNewTyCon_maybe,
+        newTyConRhs, newTyConEtadArity, newTyConEtadRhs, unwrapNewTyCon_maybe,
         tupleTyConBoxity, tupleTyConSort, tupleTyConArity,
 
         -- ** Manipulating TyCons
@@ -84,7 +84,7 @@ module TyCon(
 
         -- * Primitive representations of Types
         PrimRep(..), PrimElemRep(..),
-        tyConPrimRep,
+        tyConPrimRep, isVoidRep, isGcPtrRep,
         primRepSizeW, primElemRepSizeB,
 
         -- * Recursion breaking
@@ -96,7 +96,6 @@ module TyCon(
 
 import {-# SOURCE #-} TypeRep ( Kind, Type, PredType )
 import {-# SOURCE #-} DataCon ( DataCon, isVanillaDataCon )
-import {-# SOURCE #-} FamInst ( TcBuiltInSynFamily )
 
 import Var
 import Class
@@ -633,7 +632,7 @@ data SynTyConRhs
    -- type family F a where ..
    | AbstractClosedSynFamilyTyCon
 
-   | BuiltInSynFamTyCon TcBuiltInSynFamily
+   | BuiltInSynFamTyCon BuiltInSynFamily
 \end{code}
 
 Note [Closed type families]
@@ -857,6 +856,14 @@ instance Outputable PrimRep where
 
 instance Outputable PrimElemRep where
   ppr r = text (show r)
+
+isVoidRep :: PrimRep -> Bool
+isVoidRep VoidRep = True
+isVoidRep _other  = False
+
+isGcPtrRep :: PrimRep -> Bool
+isGcPtrRep PtrRep = True
+isGcPtrRep _      = False
 
 -- | Find the size of a 'PrimRep', in words
 primRepSizeW :: DynFlags -> PrimRep -> Int
@@ -1180,10 +1187,16 @@ isDataProductTyCon_maybe (TupleTyCon { dataCon = con })
   = Just con
 isDataProductTyCon_maybe _ = Nothing
 
--- | Is this a 'TyCon' representing a type synonym (@type@)?
+-- | Is this a 'TyCon' representing a regular H98 type synonym (@type@)?
+isTypeSynonymTyCon :: TyCon -> Bool
+isTypeSynonymTyCon (SynTyCon { synTcRhs = SynonymTyCon {} }) = True
+isTypeSynonymTyCon _ = False
+
+-- | Is this 'TyCon' a type synonym or type family?
 isSynTyCon :: TyCon -> Bool
 isSynTyCon (SynTyCon {}) = True
 isSynTyCon _             = False
+
 
 -- As for newtypes, it is in some contexts important to distinguish between
 -- closed synonyms and synonym families, as synonym families have no unique
@@ -1192,7 +1205,14 @@ isSynTyCon _             = False
 
 isDecomposableTyCon :: TyCon -> Bool
 -- True iff we can decompose (T a b c) into ((T a b) c)
+--   I.e. is it injective?
 -- Specifically NOT true of synonyms (open and otherwise)
+-- Ultimately we may have injective associated types
+-- in which case this test will become more interesting
+--
+-- It'd be unusual to call isDecomposableTyCon on a regular H98
+-- type synonym, because you should probably have expanded it first
+-- But regardless, it's not decomposable
 isDecomposableTyCon (SynTyCon {}) = False
 isDecomposableTyCon _other        = True
 
@@ -1242,7 +1262,7 @@ isClosedSynFamilyTyCon_maybe
   (SynTyCon {synTcRhs = ClosedSynFamilyTyCon ax}) = Just ax
 isClosedSynFamilyTyCon_maybe _ = Nothing
 
-isBuiltInSynFamTyCon_maybe :: TyCon -> Maybe TcBuiltInSynFamily
+isBuiltInSynFamTyCon_maybe :: TyCon -> Maybe BuiltInSynFamily
 isBuiltInSynFamTyCon_maybe
   SynTyCon {synTcRhs = BuiltInSynFamTyCon ops } = Just ops
 isBuiltInSynFamTyCon_maybe _ = Nothing
@@ -1251,17 +1271,6 @@ isBuiltInSynFamTyCon_maybe _ = Nothing
 isDataFamilyTyCon :: TyCon -> Bool
 isDataFamilyTyCon (AlgTyCon {algTcRhs = DataFamilyTyCon {}}) = True
 isDataFamilyTyCon _ = False
-
--- | Injective 'TyCon's can be decomposed, so that
---     T ty1 ~ T ty2  =>  ty1 ~ ty2
-isInjectiveTyCon :: TyCon -> Bool
-isInjectiveTyCon tc = not (isSynTyCon tc)
-        -- Ultimately we may have injective associated types
-        -- in which case this test will become more interesting
-        --
-        -- It'd be unusual to call isInjectiveTyCon on a regular H98
-        -- type synonym, because you should probably have expanded it first
-        -- But regardless, it's not injective!
 
 -- | Are we able to extract informationa 'TyVar' to class argument list
 -- mappping from a given 'TyCon'?
@@ -1363,13 +1372,15 @@ isPromotedDataCon_maybe _ = Nothing
 -- * Family instances are /not/ implicit as they represent the instance body
 --   (similar to a @dfun@ does that for a class instance).
 isImplicitTyCon :: TyCon -> Bool
-isImplicitTyCon tycon
-  | isTyConAssoc tycon = True
-  | isSynTyCon tycon   = False
-  | isAlgTyCon tycon   = isTupleTyCon tycon
-  | otherwise          = True
-        -- 'otherwise' catches: FunTyCon, PrimTyCon,
-        -- PromotedDataCon, PomotedTypeTyCon
+isImplicitTyCon (FunTyCon {})        = True
+isImplicitTyCon (TupleTyCon {})      = True
+isImplicitTyCon (PrimTyCon {})       = True
+isImplicitTyCon (PromotedDataCon {}) = True
+isImplicitTyCon (PromotedTyCon {})   = True
+isImplicitTyCon (AlgTyCon { algTcParent = AssocFamilyTyCon {} }) = True
+isImplicitTyCon (AlgTyCon {})                                    = False
+isImplicitTyCon (SynTyCon { synTcParent = AssocFamilyTyCon {} }) = True
+isImplicitTyCon (SynTyCon {})                                    = False
 
 tyConCType_maybe :: TyCon -> Maybe CType
 tyConCType_maybe tc@(AlgTyCon {}) = tyConCType tc
@@ -1480,6 +1491,12 @@ tyConRoles tc
 newTyConRhs :: TyCon -> ([TyVar], Type)
 newTyConRhs (AlgTyCon {tyConTyVars = tvs, algTcRhs = NewTyCon { nt_rhs = rhs }}) = (tvs, rhs)
 newTyConRhs tycon = pprPanic "newTyConRhs" (ppr tycon)
+
+-- | The number of type parameters that need to be passed to a newtype to resolve it. May be less than in the definition if it can be eta-contracted.
+newTyConEtadArity :: TyCon -> Int
+newTyConEtadArity (AlgTyCon {algTcRhs = NewTyCon { nt_etad_rhs = tvs_rhs }})
+        = length (fst tvs_rhs)
+newTyConEtadArity tycon = pprPanic "newTyConEtadArity" (ppr tycon)
 
 -- | Extract the bound type variables and type expansion of an eta-contracted type synonym 'TyCon'.
 -- Panics if the 'TyCon' is not a synonym

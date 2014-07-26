@@ -1,0 +1,6 @@
+
+AssocTyDef06.hs:6:16:
+    Unexpected type ‘Int’
+    In the default declaration for ‘Typ’
+    A default declaration should have form
+      default Typ a b = ...

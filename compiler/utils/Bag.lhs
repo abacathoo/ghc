@@ -6,6 +6,8 @@
 Bag: an unordered collection with duplicates
 
 \begin{code}
+{-# LANGUAGE DeriveDataTypeable, ScopedTypeVariables #-}
+
 module Bag (
         Bag, -- abstract type
 
@@ -20,8 +22,6 @@ module Bag (
         flatMapBagM, flatMapBagPairM,
         mapAndUnzipBagM, mapAccumBagLM
     ) where
-
-#include "Typeable.h"
 
 import Outputable
 import Util

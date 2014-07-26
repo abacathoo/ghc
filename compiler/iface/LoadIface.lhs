@@ -6,11 +6,13 @@
 Loading interface files
 
 \begin{code}
+{-# LANGUAGE CPP #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module LoadIface (
         -- RnM/TcM functions
         loadModuleInterface, loadModuleInterfaces, 
-        loadSrcInterface, loadInterfaceForName, 
+        loadSrcInterface, loadSrcInterface_maybe, 
+        loadInterfaceForName, loadInterfaceForModule,
 
         -- IfM functions
         loadInterface, loadWiredInHomeIface, 
@@ -84,23 +86,30 @@ loadSrcInterface :: SDoc
                  -> Maybe FastString    -- "package", if any
                  -> RnM ModIface
 
-loadSrcInterface doc mod want_boot maybe_pkg  = do
+loadSrcInterface doc mod want_boot maybe_pkg
+  = do { res <- loadSrcInterface_maybe doc mod want_boot maybe_pkg
+       ; case res of
+           Failed err      -> failWithTc err
+           Succeeded iface -> return iface }
+
+-- | Like loadSrcInterface, but returns a MaybeErr
+loadSrcInterface_maybe :: SDoc
+                       -> ModuleName
+                       -> IsBootInterface     -- {-# SOURCE #-} ?
+                       -> Maybe FastString    -- "package", if any
+                       -> RnM (MaybeErr MsgDoc ModIface)
+
+loadSrcInterface_maybe doc mod want_boot maybe_pkg
   -- We must first find which Module this import refers to.  This involves
   -- calling the Finder, which as a side effect will search the filesystem
   -- and create a ModLocation.  If successful, loadIface will read the
   -- interface; it will call the Finder again, but the ModLocation will be
   -- cached from the first search.
-  hsc_env <- getTopEnv
-  res <- liftIO $ findImportedModule hsc_env mod maybe_pkg
-  case res of
-    Found _ mod -> do
-      mb_iface <- initIfaceTcRn $ loadInterface doc mod (ImportByUser want_boot)
-      case mb_iface of
-        Failed err      -> failWithTc err
-        Succeeded iface -> return iface
-    err ->
-        let dflags = hsc_dflags hsc_env in
-        failWithTc (cannotFindInterface dflags mod err)
+  = do { hsc_env <- getTopEnv
+       ; res <- liftIO $ findImportedModule hsc_env mod maybe_pkg
+       ; case res of
+           Found _ mod -> initIfaceTcRn $ loadInterface doc mod (ImportByUser want_boot)
+           err         -> return (Failed (cannotFindInterface (hsc_dflags hsc_env) mod err)) }
 
 -- | Load interface for a module.
 loadModuleInterface :: SDoc -> Module -> TcM ModIface
@@ -126,6 +135,16 @@ loadInterfaceForName doc name
   ; ASSERT2( isExternalName name, ppr name ) 
     initIfaceTcRn $ loadSysInterface doc (nameModule name)
   }
+
+-- | Loads the interface for a given Module.
+loadInterfaceForModule :: SDoc -> Module -> TcRn ModIface
+loadInterfaceForModule doc m
+  = do
+    -- Should not be called with this module
+    when debugIsOn $ do
+      this_mod <- getModule
+      MASSERT2( this_mod /= m, ppr m <+> parens doc )
+    initIfaceTcRn $ loadSysInterface doc m
 \end{code}
 
 
@@ -334,13 +353,13 @@ wantHiBootFile dflags eps mod from
                      -- The boot-ness of the requested interface, 
                      -- based on the dependencies in directly-imported modules
   where
-    this_package = thisPackage dflags == modulePackageId mod
+    this_package = thisPackage dflags == modulePackageKey mod
 
 badSourceImport :: Module -> SDoc
 badSourceImport mod
   = hang (ptext (sLit "You cannot {-# SOURCE #-} import a module from another package"))
        2 (ptext (sLit "but") <+> quotes (ppr mod) <+> ptext (sLit "is from package")
-          <+> quotes (ppr (modulePackageId mod)))
+          <+> quotes (ppr (modulePackageKey mod)))
 \end{code}
 
 Note [Care with plugin imports]
@@ -373,7 +392,7 @@ compiler expects.
 -- the declaration itself, will find the fully-glorious Name
 --
 -- We handle ATs specially.  They are not main declarations, but also not
--- implict things (in particular, adding them to `implicitTyThings' would mess
+-- implicit things (in particular, adding them to `implicitTyThings' would mess
 -- things up in the renaming/type checking of source programs).
 -----------------------------------------------------
 
@@ -398,7 +417,6 @@ loadDecl ignore_prags mod (_version, decl)
   = do  {       -- Populate the name cache with final versions of all 
                 -- the names associated with the decl
           main_name      <- lookupOrig mod (ifName decl)
---        ; traceIf (text "Loading decl for " <> ppr main_name)
 
         -- Typecheck the thing, lazily
         -- NB. Firstly, the laziness is there in case we never need the
@@ -427,11 +445,11 @@ loadDecl ignore_prags mod (_version, decl)
         --      [ "MkT" -> <datacon MkT>, "x" -> <selector x>, ... ]
         -- (where the "MkT" is the *Name* associated with MkT, etc.)
         --
-        -- We do this by mapping the implict_names to the associated
+        -- We do this by mapping the implicit_names to the associated
         -- TyThings.  By the invariant on ifaceDeclImplicitBndrs and
         -- implicitTyThings, we can use getOccName on the implicit
         -- TyThings to make this association: each Name's OccName should
-        -- be the OccName of exactly one implictTyThing.  So the key is
+        -- be the OccName of exactly one implicitTyThing.  So the key is
         -- to define a "mini-env"
         --
         -- [ 'MkT' -> <datacon MkT>, 'x' -> <selector x>, ... ]
@@ -439,7 +457,7 @@ loadDecl ignore_prags mod (_version, decl)
         --
         -- However, there is a subtlety: due to how type checking needs
         -- to be staged, we can't poke on the forkM'd thunks inside the
-        -- implictTyThings while building this mini-env.  
+        -- implicitTyThings while building this mini-env.  
         -- If we poke these thunks too early, two problems could happen:
         --    (1) When processing mutually recursive modules across
         --        hs-boot boundaries, poking too early will do the
@@ -472,9 +490,11 @@ loadDecl ignore_prags mod (_version, decl)
                              pprPanic "loadDecl" (ppr main_name <+> ppr n $$ ppr (decl))
 
         ; implicit_names <- mapM (lookupOrig mod) (ifaceDeclImplicitBndrs decl)
+
+--         ; traceIf (text "Loading decl for " <> ppr main_name $$ ppr implicit_names)
         ; return $ (main_name, thing) :
                       -- uses the invariant that implicit_names and
-                      -- implictTyThings are bijective
+                      -- implicitTyThings are bijective
                       [(n, lookup n) | n <- implicit_names]
         }
   where
@@ -494,6 +514,25 @@ bumpDeclStats name
 \subsection{Reading an interface file}
 %*                                                      *
 %*********************************************************
+
+Note [Home module load error]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If the sought-for interface is in the current package (as determined
+by -package-name flag) then it jolly well should already be in the HPT
+because we process home-package modules in dependency order.  (Except
+in one-shot mode; see notes with hsc_HPT decl in HscTypes).
+
+It is possible (though hard) to get this error through user behaviour.
+  * Suppose package P (modules P1, P2) depends on package Q (modules Q1,
+    Q2, with Q2 importing Q1)
+  * We compile both packages.  
+  * Now we edit package Q so that it somehow depends on P
+  * Now recompile Q with --make (without recompiling P).  
+  * Then Q1 imports, say, P1, which in turn depends on Q2. So Q2
+    is a home-package module which is not yet in the HPT!  Disaster.
+
+This actually happened with P=base, Q=ghc-prim, via the AMP warnings.
+See Trac #8320.
 
 \begin{code}
 findAndReadIface :: SDoc -> Module
@@ -533,11 +572,8 @@ findAndReadIface doc_str mod hi_boot_file
                        let file_path = addBootSuffix_maybe hi_boot_file
                                                            (ml_hi_file loc)
 
-                       -- If the interface is in the current package
-                       -- then if we could load it would already be in
-                       -- the HPT and we assume that our callers checked
-                       -- that.
-                       if thisPackage dflags == modulePackageId mod &&
+                       -- See Note [Home module load error]
+                       if thisPackage dflags == modulePackageKey mod &&
                           not (isOneShot (ghcMode dflags))
                            then return (Failed (homeModError mod loc))
                            else do r <- read_file file_path
@@ -717,7 +753,7 @@ pprModIface iface
         , vcat (map pprUsage (mi_usages iface))
         , vcat (map pprIfaceAnnotation (mi_anns iface))
         , pprFixities (mi_fixities iface)
-        , vcat (map pprIfaceDecl (mi_decls iface))
+        , vcat [ppr ver $$ nest 2 (ppr decl) | (ver,decl) <- mi_decls iface]
         , vcat (map ppr (mi_insts iface))
         , vcat (map ppr (mi_fam_insts iface))
         , vcat (map ppr (mi_rules iface))
@@ -783,10 +819,6 @@ pprDeps (Deps { dep_mods = mods, dep_pkgs = pkgs, dep_orphs = orphs,
     ppr_boot True  = text "[boot]"
     ppr_boot False = empty
 
-pprIfaceDecl :: (Fingerprint, IfaceDecl) -> SDoc
-pprIfaceDecl (ver, decl)
-  = ppr ver $$ nest 2 (ppr decl)
-
 pprFixities :: [(OccName, Fixity)] -> SDoc
 pprFixities []    = empty
 pprFixities fixes = ptext (sLit "fixities") <+> pprWithCommas pprFix fixes
@@ -844,7 +876,7 @@ badIfaceFile file err
 
 hiModuleNameMismatchWarn :: Module -> Module -> MsgDoc
 hiModuleNameMismatchWarn requested_mod read_mod = 
-  withPprStyle defaultUserStyle $
+  withPprStyle (mkUserStyle alwaysQualify AllTheWay) $
     -- we want the Modules below to be qualified with package names,
     -- so reset the PrintUnqualified setting.
     hsep [ ptext (sLit "Something is amiss; requested module ")
@@ -866,6 +898,7 @@ wrongIfaceModErr iface mod_name file_path
   where iface_file = doubleQuotes (text file_path)
 
 homeModError :: Module -> ModLocation -> SDoc
+-- See Note [Home module load error]
 homeModError mod location
   = ptext (sLit "attempting to use module ") <> quotes (ppr mod)
     <> (case ml_hs_file location of

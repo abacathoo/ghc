@@ -214,6 +214,7 @@ hs_init_ghc(int *argc, char **argv[], RtsConfig rts_config)
     getStablePtr((StgPtr)ensureIOManagerIsRunning_closure);
     getStablePtr((StgPtr)ioManagerCapabilitiesChanged_closure);
 #ifndef mingw32_HOST_OS
+    getStablePtr((StgPtr)blockedOnBadFD_closure);
     getStablePtr((StgPtr)runHandlers_closure);
 #endif
 
@@ -304,7 +305,7 @@ hs_add_root(void (*init_root)(void) STG_UNUSED)
 static void
 hs_exit_(rtsBool wait_foreign)
 {
-    nat g;
+    nat g, i;
 
     if (hs_init_count <= 0) {
 	errorBelch("warning: too many hs_exit()s");
@@ -336,6 +337,9 @@ hs_exit_(rtsBool wait_foreign)
     exitScheduler(wait_foreign);
 
     /* run C finalizers for all active weak pointers */
+    for (i = 0; i < n_capabilities; i++) {
+        runAllCFinalizers(capabilities[i]->weak_ptr_list_hd);
+    }
     for (g = 0; g < RtsFlags.GcFlags.generations; g++) {
         runAllCFinalizers(generations[g].weak_ptr_list);
     }
@@ -355,8 +359,12 @@ hs_exit_(rtsBool wait_foreign)
     resetTerminalSettings();
 #endif
 
-    // uninstall signal handlers
-    resetDefaultHandlers();
+#if defined(RTS_USER_SIGNALS)
+    if (RtsFlags.MiscFlags.install_signal_handlers) {
+        // uninstall signal handlers
+        resetDefaultHandlers();
+    }
+#endif
 
     /* stop timing the shutdown, we're about to print stats */
     stat_endExit();
@@ -455,24 +463,70 @@ shutdownHaskell(void)
 }
 
 void
-shutdownHaskellAndExit(int n)
+shutdownHaskellAndExit(int n, int fastExit)
 {
-    // even if hs_init_count > 1, we still want to shut down the RTS
-    // and exit immediately (see #5402)
-    hs_init_count = 1;
+    if (!fastExit) {
+        // even if hs_init_count > 1, we still want to shut down the RTS
+        // and exit immediately (see #5402)
+        hs_init_count = 1;
 
-    // we're about to exit(), no need to wait for foreign calls to return.
-    hs_exit_(rtsFalse);
+        // we're about to exit(), no need to wait for foreign calls to return.
+        hs_exit_(rtsFalse);
+    }
 
     stg_exit(n);
 }
 
 #ifndef mingw32_HOST_OS
+static void exitBySignal(int sig) GNUC3_ATTRIBUTE(__noreturn__);
+
 void
-shutdownHaskellAndSignal(int sig)
+shutdownHaskellAndSignal(int sig, int fastExit)
 {
-    hs_exit_(rtsFalse);
-    kill(getpid(),sig);
+    if (!fastExit) {
+        hs_exit_(rtsFalse);
+    }
+
+    exitBySignal(sig);
+}
+
+void
+exitBySignal(int sig)
+{
+    // We're trying to kill ourselves with a given signal.
+    // That's easier said that done because:
+    //  - signals can be ignored have handlers set for them
+    //  - signals can be masked
+    //  - signals default action can do things other than terminate:
+    //    + can do nothing
+    //    + can do weirder things: stop/continue the process
+
+    struct sigaction dfl;
+    sigset_t sigset;
+
+    // So first of all, we reset the signal to use the default action.
+    (void)sigemptyset(&dfl.sa_mask);
+    dfl.sa_flags = 0;
+    dfl.sa_handler = SIG_DFL;
+    (void)sigaction(sig, &dfl, NULL);
+
+    // Then we unblock the signal so we can deliver it to ourselves
+    sigemptyset(&sigset);
+    sigaddset(&sigset, sig);
+    sigprocmask(SIG_UNBLOCK, &sigset, NULL);
+
+    switch (sig) {
+      case SIGSTOP: case SIGTSTP: case SIGTTIN: case SIGTTOU: case SIGCONT:
+        // These signals stop (or continue) the process, so are no good for
+        // exiting.
+        exit(0xff);
+
+      default:
+        kill(getpid(),sig);
+        // But it's possible the signal is one where the default action is to
+        // ignore, in which case we'll still be alive... so just exit.
+        exit(0xff);
+    }
 }
 #endif
 

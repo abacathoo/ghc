@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards, CPP, ForeignFunctionInterface #-}
+{-# LANGUAGE CPP #-}
 -----------------------------------------------------------------------------
 --
 -- (c) The University of Glasgow 2004-2009.
@@ -16,6 +16,7 @@ import Distribution.ModuleName hiding (main)
 import Distribution.InstalledPackageInfo
 import Distribution.Compat.ReadP
 import Distribution.ParseUtils
+import Distribution.ModuleExport
 import Distribution.Package hiding (depends)
 import Distribution.Text
 import Distribution.Version
@@ -31,6 +32,8 @@ import Prelude
 import System.Console.GetOpt
 import qualified Control.Exception as Exception
 import Data.Maybe
+
+import qualified Data.Set as Set
 
 import Data.Char ( isSpace, toLower )
 import Data.Ord (comparing)
@@ -111,9 +114,11 @@ data Flag
   | FlagVersion
   | FlagConfig FilePath
   | FlagGlobalConfig FilePath
+  | FlagUserConfig FilePath
   | FlagForce
   | FlagForceFiles
   | FlagAutoGHCiLibs
+  | FlagMultiInstance
   | FlagExpandEnvVars
   | FlagExpandPkgroot
   | FlagNoExpandPkgroot
@@ -138,6 +143,8 @@ flags = [
         "location of the global package database",
   Option [] ["no-user-package-db"] (NoArg FlagNoUserDb)
         "never read the user package database",
+  Option [] ["user-package-db"] (ReqArg FlagUserConfig "DIR")
+        "location of the user package database (use instead of default)",
   Option [] ["no-user-package-conf"] (NoArg FlagNoUserDb)
         "never read the user package database (DEPRECATED)",
   Option [] ["force"] (NoArg FlagForce)
@@ -146,6 +153,8 @@ flags = [
          "ignore missing directories and libraries only",
   Option ['g'] ["auto-ghci-libs"] (NoArg FlagAutoGHCiLibs)
         "automatically build libs for GHCi (with register)",
+  Option [] ["enable-multi-instance"] (NoArg FlagMultiInstance)
+        "allow registering multiple instances of the same package version",
   Option [] ["expand-env-vars"] (NoArg FlagExpandEnvVars)
         "expand environment variables (${name}-style) in input package descriptions",
   Option [] ["expand-pkgroot"] (NoArg FlagExpandPkgroot)
@@ -309,6 +318,7 @@ runit verbosity cli nonopts = do
           | FlagForceFiles `elem` cli   = ForceFiles
           | otherwise                   = NoForce
         auto_ghci_libs = FlagAutoGHCiLibs `elem` cli
+        multi_instance = FlagMultiInstance `elem` cli
         expand_env_vars= FlagExpandEnvVars `elem` cli
         mexpand_pkgroot= foldl' accumExpandPkgroot Nothing cli
           where accumExpandPkgroot _ FlagExpandPkgroot   = Just True
@@ -319,6 +329,28 @@ runit verbosity cli nonopts = do
           where splitComma "" = Nothing
                 splitComma fs = Just $ break (==',') (tail fs)
 
+        -- | Parses a glob into a predicate which tests if a string matches
+        -- the glob.  Returns Nothing if the string in question is not a glob.
+        -- At the moment, we only support globs at the beginning and/or end of
+        -- strings.  This function respects case sensitivity.
+        --
+        -- >>> fromJust (substringCheck "*") "anything"
+        -- True
+        --
+        -- >>> fromJust (substringCheck "string") "string"
+        -- True
+        --
+        -- >>> fromJust (substringCheck "*bar") "foobar"
+        -- True
+        --
+        -- >>> fromJust (substringCheck "foo*") "foobar"
+        -- True
+        --
+        -- >>> fromJust (substringCheck "*ooba*") "foobar"
+        -- True
+        --
+        -- >>> fromJust (substringCheck "f*bar") "foobar"
+        -- False
         substringCheck :: String -> Maybe (String -> Bool)
         substringCheck ""    = Nothing
         substringCheck "*"   = Just (const True)
@@ -355,10 +387,12 @@ runit verbosity cli nonopts = do
         initPackageDB filename verbosity cli
     ["register", filename] ->
         registerPackage filename verbosity cli
-                        auto_ghci_libs expand_env_vars False force
+                        auto_ghci_libs multi_instance
+                        expand_env_vars False force
     ["update", filename] ->
         registerPackage filename verbosity cli
-                        auto_ghci_libs expand_env_vars True force
+                        auto_ghci_libs multi_instance
+                        expand_env_vars True force
     ["unregister", pkgid_str] -> do
         pkgid <- readGlobPkgId pkgid_str
         unregisterPackage pkgid verbosity cli force
@@ -515,16 +549,18 @@ getPkgDatabases verbosity modify use_cache expand_vars my_flags = do
   e_appdir <- tryIO $ getAppUserDataDirectory "ghc"
 
   mb_user_conf <-
-     if no_user_db then return Nothing else
-     case e_appdir of
-       Left _    -> return Nothing
-       Right appdir -> do
-         let subdir = targetARCH ++ '-':targetOS ++ '-':Version.version
-             dir = appdir </> subdir
-         r <- lookForPackageDBIn dir
-         case r of
-           Nothing -> return (Just (dir </> "package.conf.d", False))
-           Just f  -> return (Just (f, True))
+    case [ f | FlagUserConfig f <- my_flags ] of
+      _ | no_user_db -> return Nothing
+      [] -> case e_appdir of
+        Left _    -> return Nothing
+        Right appdir -> do
+          let subdir = targetARCH ++ '-':targetOS ++ '-':Version.version
+              dir = appdir </> subdir
+          r <- lookForPackageDBIn dir
+          case r of
+            Nothing -> return (Just (dir </> "package.conf.d", False))
+            Just f  -> return (Just (f, True))
+      fs -> return (Just (last fs, True))
 
   -- If the user database doesn't exist, and this command isn't a
   -- "modify" command, then we won't attempt to create or use it.
@@ -585,6 +621,11 @@ getPkgDatabases verbosity modify use_cache expand_vars my_flags = do
   let flag_db_stack = [ db | db_name <- flag_db_names,
                         db <- db_stack, location db == db_name ]
 
+  when (verbosity > Normal) $ do
+    infoLn ("db stack: " ++ show (map location db_stack))
+    infoLn ("modifying: " ++ show to_modify)
+    infoLn ("flag db stack: " ++ show (map location flag_db_stack))
+
   return (db_stack, to_modify, flag_db_stack)
 
 
@@ -593,9 +634,9 @@ lookForPackageDBIn dir = do
   let path_dir = dir </> "package.conf.d"
   exists_dir <- doesDirectoryExist path_dir
   if exists_dir then return (Just path_dir) else do
-  let path_file = dir </> "package.conf"
-  exists_file <- doesFileExist path_file
-  if exists_file then return (Just path_file) else return Nothing
+    let path_file = dir </> "package.conf"
+    exists_file <- doesFileExist path_file
+    if exists_file then return (Just path_file) else return Nothing
 
 readParseDatabase :: Verbosity
                   -> Maybe (FilePath,Bool)
@@ -782,11 +823,13 @@ registerPackage :: FilePath
                 -> Verbosity
                 -> [Flag]
                 -> Bool              -- auto_ghci_libs
+                -> Bool              -- multi_instance
                 -> Bool              -- expand_env_vars
                 -> Bool              -- update
                 -> Force
                 -> IO ()
-registerPackage input verbosity my_flags auto_ghci_libs expand_env_vars update force = do
+registerPackage input verbosity my_flags auto_ghci_libs multi_instance
+                expand_env_vars update force = do
   (db_stack, Just to_modify, _flag_dbs) <- 
       getPkgDatabases verbosity True True False{-expand vars-} my_flags
 
@@ -829,13 +872,23 @@ registerPackage input verbosity my_flags auto_ghci_libs expand_env_vars update f
   let truncated_stack = dropWhile ((/= to_modify).location) db_stack
   -- truncate the stack for validation, because we don't allow
   -- packages lower in the stack to refer to those higher up.
-  validatePackageConfig pkg_expanded verbosity truncated_stack auto_ghci_libs update force
+  validatePackageConfig pkg_expanded verbosity truncated_stack
+                        auto_ghci_libs multi_instance update force
+
+  -- postprocess the package
+  pkg' <- resolveReexports truncated_stack pkg
+
   let 
+     -- In the normal mode, we only allow one version of each package, so we
+     -- remove all instances with the same source package id as the one we're
+     -- adding. In the multi instance mode we don't do that, thus allowing
+     -- multiple instances with the same source package id.
      removes = [ RemovePackage p
-               | p <- packages db_to_operate_on,
+               | not multi_instance,
+                 p <- packages db_to_operate_on,
                  sourcePackageId p == sourcePackageId pkg ]
   --
-  changeDB verbosity (removes ++ [AddPackage pkg]) db_to_operate_on
+  changeDB verbosity (removes ++ [AddPackage pkg']) db_to_operate_on
 
 parsePackageInfo
         :: String
@@ -849,6 +902,47 @@ parsePackageInfo str =
     ParseFailed err -> case locatedErrorMsg err of
                            (Nothing, s) -> die s
                            (Just l, s) -> die (show l ++ ": " ++ s)
+
+-- | Takes the "reexported-modules" field of an InstalledPackageInfo
+-- and resolves the references so they point to the original exporter
+-- of a module (i.e. the module is in exposed-modules, not
+-- reexported-modules).  This is done by maintaining an invariant on
+-- the installed package database that a reexported-module field always
+-- points to the original exporter.
+resolveReexports :: PackageDBStack
+                 -> InstalledPackageInfo
+                 -> IO InstalledPackageInfo
+resolveReexports db_stack pkg = do
+  let dep_mask = Set.fromList (depends pkg)
+      deps = filter (flip Set.member dep_mask . installedPackageId)
+                    (allPackagesInStack db_stack)
+      matchExposed pkg_dep m = map ((,) (installedPackageId pkg_dep))
+                                   (filter (==m) (exposedModules pkg_dep))
+      worker ModuleExport{ exportOrigPackageName = Just pnm } pkg_dep
+        | pnm /= packageName (sourcePackageId pkg_dep) = []
+      -- Now, either the package matches, *or* we were asked to search the
+      -- true location ourselves.
+      worker ModuleExport{ exportOrigName = m } pkg_dep =
+            matchExposed pkg_dep m ++
+            map (fromMaybe (error $ "Impossible! Missing true location in " ++
+                                    display (installedPackageId pkg_dep))
+                    . exportCachedTrueOrig)
+                (filter ((==m) . exportName) (reexportedModules pkg_dep))
+      self_reexports ModuleExport{ exportOrigPackageName = Just pnm }
+        | pnm /= packageName (sourcePackageId pkg) = []
+      self_reexports ModuleExport{ exportName = m', exportOrigName = m }
+        -- Self-reexport without renaming doesn't make sense
+        | m == m' = []
+        -- *Only* match against exposed modules!
+        | otherwise = matchExposed pkg m
+
+  r <- forM (reexportedModules pkg) $ \me -> do
+    case nub (concatMap (worker me) deps ++ self_reexports me) of
+      [c] -> return me { exportCachedTrueOrig = Just c }
+      [] -> die $ "Couldn't resolve reexport " ++ display me
+      cs -> die $ "Found multiple possible ways to resolve reexport " ++
+                  display me ++ ": " ++ show cs
+  return (pkg { reexportedModules = r })
 
 -- -----------------------------------------------------------------------------
 -- Making changes to a package database
@@ -934,10 +1028,11 @@ modifyPackage
   -> Force
   -> IO ()
 modifyPackage fn pkgid verbosity my_flags force = do
-  (db_stack, Just _to_modify, _flag_dbs) <- 
+  (db_stack, Just _to_modify, flag_dbs) <-
       getPkgDatabases verbosity True{-modify-} True{-use cache-} False{-expand vars-} my_flags
 
-  (db, ps) <- fmap head $ findPackagesByDB db_stack (Id pkgid)
+  -- Do the search for the package respecting flags...
+  (db, ps) <- fmap head $ findPackagesByDB flag_dbs (Id pkgid)
   let 
       db_name = location db
       pkgs    = packages db
@@ -947,6 +1042,7 @@ modifyPackage fn pkgid verbosity my_flags force = do
       cmds = [ fn pkg | pkg <- pkgs, sourcePackageId pkg `elem` pids ]
       new_db = updateInternalDB db cmds
 
+      -- ...but do consistency checks with regards to the full stack
       old_broken = brokenPackages (allPackagesInStack db_stack)
       rest_of_stack = filter ((/= db_name) . location) db_stack
       new_stack = new_db : rest_of_stack
@@ -1035,34 +1131,34 @@ listPackages verbosity my_flags mPackageName mModuleName = do
   if simple_output then show_simple stack else do
 
 #if defined(mingw32_HOST_OS) || defined(BOOTSTRAPPING)
-  mapM_ show_normal stack
+    mapM_ show_normal stack
 #else
-  let
-     show_colour withF db =
-         mconcat $ map (<#> termText "\n") $
-             (termText (location db) :
-                map (termText "   " <#>) (map pp_pkg (packages db)))
-        where
-                 pp_pkg p
-                   | sourcePackageId p `elem` broken = withF Red  doc
-                   | exposed p                       = doc
-                   | otherwise                       = withF Blue doc
-                   where doc | verbosity >= Verbose
-                             = termText (printf "%s (%s)" pkg ipid)
-                             | otherwise
-                             = termText pkg
-                          where
-                          InstalledPackageId ipid = installedPackageId p
-                          pkg = display (sourcePackageId p)
+    let
+       show_colour withF db =
+           mconcat $ map (<#> termText "\n") $
+               (termText (location db) :
+                  map (termText "   " <#>) (map pp_pkg (packages db)))
+          where
+                   pp_pkg p
+                     | sourcePackageId p `elem` broken = withF Red  doc
+                     | exposed p                       = doc
+                     | otherwise                       = withF Blue doc
+                     where doc | verbosity >= Verbose
+                               = termText (printf "%s (%s)" pkg ipid)
+                               | otherwise
+                               = termText pkg
+                            where
+                            InstalledPackageId ipid = installedPackageId p
+                            pkg = display (sourcePackageId p)
 
-  is_tty <- hIsTerminalDevice stdout
-  if not is_tty
-     then mapM_ show_normal stack
-     else do tty <- Terminfo.setupTermFromEnv
-             case Terminfo.getCapability tty withForegroundColor of
-                 Nothing -> mapM_ show_normal stack
-                 Just w  -> runTermOutput tty $ mconcat $
-                                                map (show_colour w) stack
+    is_tty <- hIsTerminalDevice stdout
+    if not is_tty
+       then mapM_ show_normal stack
+       else do tty <- Terminfo.setupTermFromEnv
+               case Terminfo.getCapability tty withForegroundColor of
+                   Nothing -> mapM_ show_normal stack
+                   Just w  -> runTermOutput tty $ mconcat $
+                                                  map (show_colour w) stack
 #endif
 
 simplePackageList :: [Flag] -> [InstalledPackageInfo] -> IO ()
@@ -1204,7 +1300,8 @@ checkConsistency verbosity my_flags = do
   let pkgs = allPackagesInStack db_stack
 
       checkPackage p = do
-         (_,es,ws) <- runValidate $ checkPackageConfig p verbosity db_stack False True
+         (_,es,ws) <- runValidate $ checkPackageConfig p verbosity db_stack
+                                                       False True True
          if null es
             then do when (not simple_output) $ do
                       _ <- reportValidateErrors [] ws "" Nothing
@@ -1267,15 +1364,19 @@ type InstalledPackageInfoString = InstalledPackageInfo_ String
 convertPackageInfoOut :: InstalledPackageInfo -> InstalledPackageInfoString
 convertPackageInfoOut
     (pkgconf@(InstalledPackageInfo { exposedModules = e,
+                                     reexportedModules = r,
                                      hiddenModules = h })) =
         pkgconf{ exposedModules = map display e,
+                 reexportedModules = map (fmap display) r,
                  hiddenModules  = map display h }
 
 convertPackageInfoIn :: InstalledPackageInfoString -> InstalledPackageInfo
 convertPackageInfoIn
     (pkgconf@(InstalledPackageInfo { exposedModules = e,
+                                     reexportedModules = r,
                                      hiddenModules = h })) =
         pkgconf{ exposedModules = map convert e,
+                 reexportedModules = map (fmap convert) r,
                  hiddenModules  = map convert h }
     where convert = fromJust . simpleParse
 
@@ -1354,11 +1455,15 @@ validatePackageConfig :: InstalledPackageInfo
                       -> Verbosity
                       -> PackageDBStack
                       -> Bool   -- auto-ghc-libs
+                      -> Bool   -- multi_instance
                       -> Bool   -- update, or check
                       -> Force
                       -> IO ()
-validatePackageConfig pkg verbosity db_stack auto_ghci_libs update force = do
-  (_,es,ws) <- runValidate $ checkPackageConfig pkg verbosity db_stack auto_ghci_libs update
+validatePackageConfig pkg verbosity db_stack auto_ghci_libs
+                      multi_instance update force = do
+  (_,es,ws) <- runValidate $
+                 checkPackageConfig pkg verbosity db_stack
+                                    auto_ghci_libs multi_instance update
   ok <- reportValidateErrors es ws (display (sourcePackageId pkg) ++ ": ") (Just force)
   when (not ok) $ exitWith (ExitFailure 1)
 
@@ -1366,12 +1471,14 @@ checkPackageConfig :: InstalledPackageInfo
                       -> Verbosity
                       -> PackageDBStack
                       -> Bool   -- auto-ghc-libs
+                      -> Bool   -- multi_instance
                       -> Bool   -- update, or check
                       -> Validate ()
-checkPackageConfig pkg verbosity db_stack auto_ghci_libs update = do
+checkPackageConfig pkg verbosity db_stack auto_ghci_libs
+                   multi_instance update = do
   checkInstalledPackageId pkg db_stack update
   checkPackageId pkg
-  checkDuplicates db_stack pkg update
+  checkDuplicates db_stack pkg multi_instance update
   mapM_ (checkDep db_stack) (depends pkg)
   checkDuplicateDepends (depends pkg)
   mapM_ (checkDir False "import-dirs")  (importDirs pkg)
@@ -1410,15 +1517,17 @@ checkPackageId ipi =
     []  -> verror CannotForce ("invalid package identifier: " ++ str)
     _   -> verror CannotForce ("ambiguous package identifier: " ++ str)
 
-checkDuplicates :: PackageDBStack -> InstalledPackageInfo -> Bool -> Validate ()
-checkDuplicates db_stack pkg update = do
+checkDuplicates :: PackageDBStack -> InstalledPackageInfo
+                -> Bool -> Bool-> Validate ()
+checkDuplicates db_stack pkg multi_instance update = do
   let
         pkgid = sourcePackageId pkg
         pkgs  = packages (head db_stack)
   --
   -- Check whether this package id already exists in this DB
   --
-  when (not update && (pkgid `elem` map sourcePackageId pkgs)) $
+  when (not update && not multi_instance
+                   && (pkgid `elem` map sourcePackageId pkgs)) $
        verror CannotForce $
           "package " ++ display pkgid ++ " is already installed"
 
@@ -1504,6 +1613,7 @@ doesFileExistOnPath filenames paths = go fullFilenames
         go ((p, fp) : xs) = do b <- doesFileExist fp
                                if b then return (Just p) else go xs
 
+-- XXX maybe should check reexportedModules too
 checkModules :: InstalledPackageInfo -> Validate ()
 checkModules pkg = do
   mapM_ findModule (exposedModules pkg ++ hiddenModules pkg)

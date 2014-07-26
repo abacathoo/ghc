@@ -4,6 +4,8 @@
 \section[RnSource]{Main pass of renamer}
 
 \begin{code}
+{-# LANGUAGE CPP #-}
+
 module RnTypes (
         -- Type related stuff
         rnHsType, rnLHsType, rnLHsTypes, rnContext,
@@ -15,19 +17,14 @@ module RnTypes (
         mkOpAppRn, mkNegAppRn, mkOpFormRn, mkConOpPatRn,
         checkPrecMatch, checkSectionPrec, warnUnusedForAlls,
 
-        -- Splice related stuff
-        rnSplice, checkTH,
-
         -- Binding related stuff
         bindSigTyVarsFV, bindHsTyVars, rnHsBndrSig,
         extractHsTyRdrTyVars, extractHsTysRdrTyVars,
         extractRdrKindSigVars, extractDataDefnKindVars, filterInScope
   ) where
 
-import {-# SOURCE #-} RnExpr( rnLExpr )
-#ifdef GHCI
 import {-# SOURCE #-} TcSplice( runQuasiQuoteType )
-#endif  /* GHCI */
+import {-# SOURCE #-} RnSplice( rnSpliceType )
 
 import DynFlags
 import HsSyn
@@ -226,12 +223,17 @@ rnHsTyKi isType doc tupleTy@(HsTupleTy tup_con tys)
        ; (tys', fvs) <- mapFvRn (rnLHsTyKi isType doc) tys
        ; return (HsTupleTy tup_con tys', fvs) }
 
--- 1. Perhaps we should use a separate extension here?
--- 2. Check that the integer is positive?
+-- Perhaps we should use a separate extension here?
+-- Ensure that a type-level integer is nonnegative (#8306, #8412)
 rnHsTyKi isType _ tyLit@(HsTyLit t)
   = do { data_kinds <- xoptM Opt_DataKinds
        ; unless (data_kinds || isType) (addErr (dataKindsErr isType tyLit))
+       ; when (negLit t) (addErr negLitErr)
        ; return (HsTyLit t, emptyFVs) }
+  where
+    negLit (HsStrTy _) = False
+    negLit (HsNumTy i) = i < 0
+    negLitErr = ptext (sLit "Illegal literal in type (type literals must not be negative):") <+> ppr tyLit
 
 rnHsTyKi isType doc (HsAppTy ty1 ty2)
   = do { (ty1', fvs1) <- rnLHsTyKi isType doc ty1
@@ -249,10 +251,9 @@ rnHsTyKi isType doc (HsEqTy ty1 ty2)
        ; (ty2', fvs2) <- rnLHsType doc ty2
        ; return (HsEqTy ty1' ty2', fvs1 `plusFV` fvs2) }
 
-rnHsTyKi isType _ (HsSpliceTy sp _ k)
+rnHsTyKi isType _ (HsSpliceTy sp k)
   = ASSERT( isType )
-    do { (sp', fvs) <- rnSplice sp      -- ToDo: deal with fvs
-       ; return (HsSpliceTy sp' fvs k, fvs) }
+    rnSpliceType sp k
 
 rnHsTyKi isType doc (HsDocTy ty haddock_doc)
   = ASSERT( isType )
@@ -260,16 +261,12 @@ rnHsTyKi isType doc (HsDocTy ty haddock_doc)
        ; haddock_doc' <- rnLHsDoc haddock_doc
        ; return (HsDocTy ty' haddock_doc', fvs) }
 
-#ifndef GHCI
-rnHsTyKi _ _ ty@(HsQuasiQuoteTy _) = pprPanic "Can't do quasiquotation without GHCi" (ppr ty)
-#else
 rnHsTyKi isType doc (HsQuasiQuoteTy qq)
   = ASSERT( isType )
     do { ty <- runQuasiQuoteType qq
          -- Wrap the result of the quasi-quoter in parens so that we don't
          -- lose the outermost location set by runQuasiQuote (#7918) 
        ; rnHsType doc (HsParTy ty) }
-#endif
 
 rnHsTyKi isType _ (HsCoreTy ty)
   = ASSERT( isType )
@@ -365,8 +362,9 @@ bindHsTyVars doc mb_assoc kv_bndrs tv_bndrs thing_inside
              kvs_from_tv_bndrs = [ kv | L _ (KindedTyVar _ kind) <- tvs
                                  , let (_, kvs) = extractHsTyRdrTyVars kind
                                  , kv <- kvs ]
-             all_kvs = filterOut (`elemLocalRdrEnv` rdr_env) $
-                       nub (kv_bndrs ++ kvs_from_tv_bndrs)
+             all_kvs' = nub (kv_bndrs ++ kvs_from_tv_bndrs)
+             all_kvs  = filterOut (`elemLocalRdrEnv` rdr_env) all_kvs'
+
              overlap_kvs = [ kv | kv <- all_kvs, any ((==) kv . hsLTyVarName) tvs ]
                 -- These variables appear both as kind and type variables
                 -- in the same declaration; eg  type family  T (x :: *) (y :: x)
@@ -400,8 +398,12 @@ bindHsTyVars doc mb_assoc kv_bndrs tv_bndrs thing_inside
 
        ; (tv_bndrs', fvs1) <- mapFvRn rn_tv_bndr tvs
        ; (res, fvs2) <- bindLocalNamesFV (map hsLTyVarName tv_bndrs') $
-                        do { env <- getLocalRdrEnv
-                           ; traceRn (text "bhtv" <+> (ppr tvs $$ ppr all_kvs $$ ppr env))
+                        do { inner_rdr_env <- getLocalRdrEnv
+                           ; traceRn (text "bhtv" <+> vcat
+                                 [ ppr tvs, ppr kv_bndrs, ppr kvs_from_tv_bndrs
+                                 , ppr $ map (`elemLocalRdrEnv` rdr_env) all_kvs'
+                                 , ppr $ map (getUnique . rdrNameOcc) all_kvs'
+                                 , ppr all_kvs, ppr rdr_env, ppr inner_rdr_env ])
                            ; thing_inside (HsQTvs { hsq_tvs = tv_bndrs', hsq_kvs = kv_names }) }
        ; return (res, fvs1 `plusFV` fvs2) } }
 
@@ -836,60 +838,6 @@ opTyErr op ty@(HsOpTy ty1 _ _)
     forall_head (L _ (HsAppTy ty _)) = forall_head ty
     forall_head _other               = False
 opTyErr _ ty = pprPanic "opTyErr: Not an op" (ppr ty)
-\end{code}
-
-%*********************************************************
-%*                                                      *
-                Splices
-%*                                                      *
-%*********************************************************
-
-Note [Splices]
-~~~~~~~~~~~~~~
-Consider
-        f = ...
-        h = ...$(thing "f")...
-
-The splice can expand into literally anything, so when we do dependency
-analysis we must assume that it might mention 'f'.  So we simply treat
-all locally-defined names as mentioned by any splice.  This is terribly
-brutal, but I don't see what else to do.  For example, it'll mean
-that every locally-defined thing will appear to be used, so no unused-binding
-warnings.  But if we miss the dependency, then we might typecheck 'h' before 'f',
-and that will crash the type checker because 'f' isn't in scope.
-
-Currently, I'm not treating a splice as also mentioning every import,
-which is a bit inconsistent -- but there are a lot of them.  We might
-thereby get some bogus unused-import warnings, but we won't crash the
-type checker.  Not very satisfactory really.
-
-\begin{code}
-rnSplice :: HsSplice RdrName -> RnM (HsSplice Name, FreeVars)
-rnSplice (HsSplice n expr)
-  = do  { checkTH expr "splice"
-        ; loc  <- getSrcSpanM
-        ; n' <- newLocalBndrRn (L loc n)
-        ; (expr', fvs) <- rnLExpr expr
-
-        -- Ugh!  See Note [Splices] above
-        ; lcl_rdr <- getLocalRdrEnv
-        ; gbl_rdr <- getGlobalRdrEnv
-        ; let gbl_names = mkNameSet [gre_name gre | gre <- globalRdrEnvElts gbl_rdr,
-                                                    isLocalGRE gre]
-              lcl_names = mkNameSet (localRdrEnvElts lcl_rdr)
-
-        ; return (HsSplice n' expr', fvs `plusFV` lcl_names `plusFV` gbl_names) }
-
-checkTH :: Outputable a => a -> String -> RnM ()
-#ifdef GHCI
-checkTH _ _ = return () -- OK
-#else
-checkTH e what  -- Raise an error in a stage-1 compiler
-  = addErr (vcat [ptext (sLit "Template Haskell") <+> text what <+>
-                  ptext (sLit "requires GHC with interpreter support"),
-                  ptext (sLit "Perhaps you are using a stage-1 compiler?"),
-                  nest 2 (ppr e)])
-#endif
 \end{code}
 
 %************************************************************************

@@ -2,14 +2,15 @@
 % (c) The University of Glasgow 2005-2012
 %
 \begin{code}
+{-# LANGUAGE CPP, NondecreasingIndentation #-}
+{-# OPTIONS_GHC -fno-cse #-}
+-- -fno-cse is needed for GLOBAL_VAR's to behave properly
+
 -- | The dynamic linker for GHCi.
 --
 -- This module deals with the top-level issues of dynamic linking,
 -- calling the object-code linker and the byte-code linker where
 -- necessary.
-
-{-# OPTIONS -fno-cse #-}
--- -fno-cse is needed for GLOBAL_VAR's to behave properly
 
 module Linker ( getHValue, showLinkerState,
                 linkExpr, linkDecls, unload, withExtendedLinkEnv,
@@ -52,7 +53,6 @@ import FastString
 import Config
 import Platform
 import SysTools
-import PrelNames
 
 -- Standard libraries
 import Control.Monad
@@ -70,7 +70,7 @@ import System.Directory hiding (findFile)
 import System.Directory
 #endif
 
-import Distribution.Package hiding (depends, PackageId)
+import Distribution.Package hiding (depends)
 
 import Exception
 \end{code}
@@ -124,7 +124,7 @@ data PersistentLinkerState
         -- The currently-loaded packages; always object code
         -- Held, as usual, in dependency order; though I am not sure if
         -- that is really important
-        pkgs_loaded :: ![PackageId]
+        pkgs_loaded :: ![PackageKey]
      }
 
 emptyPLS :: DynFlags -> PersistentLinkerState
@@ -140,10 +140,10 @@ emptyPLS _ = PersistentLinkerState {
   --
   -- The linker's symbol table is populated with RTS symbols using an
   -- explicit list.  See rts/Linker.c for details.
-  where init_pkgs = [rtsPackageId]
+  where init_pkgs = [rtsPackageKey]
 
 
-extendLoadedPkgs :: [PackageId] -> IO ()
+extendLoadedPkgs :: [PackageKey] -> IO ()
 extendLoadedPkgs pkgs =
   modifyPLS_ $ \s ->
       return s{ pkgs_loaded = pkgs ++ pkgs_loaded s }
@@ -379,7 +379,16 @@ preloadLib dflags lib_paths framework_paths lib_spec
              -> do maybe_errstr <- loadDLL (mkSOName platform dll_unadorned)
                    case maybe_errstr of
                       Nothing -> maybePutStrLn dflags "done"
-                      Just mm -> preloadFailed mm lib_paths lib_spec
+                      Just mm | platformOS platform /= OSDarwin ->
+                        preloadFailed mm lib_paths lib_spec
+                      Just mm | otherwise -> do
+                        -- As a backup, on Darwin, try to also load a .so file
+                        -- since (apparently) some things install that way - see
+                        -- ticket #8770.
+                        err2 <- loadDLL $ ("lib" ++ dll_unadorned) <.> "so"
+                        case err2 of
+                          Nothing -> maybePutStrLn dflags "done"
+                          Just _  -> preloadFailed mm lib_paths lib_spec
 
           DLLPath dll_path
              -> do maybe_errstr <- loadDLL dll_path
@@ -413,14 +422,14 @@ preloadLib dflags lib_paths framework_paths lib_spec
     preload_static _paths name
        = do b <- doesFileExist name
             if not b then return False
-                     else do if cDYNAMIC_GHC_PROGRAMS
+                     else do if dynamicGhc
                                  then dynLoadObjs dflags [name]
                                  else loadObj name
                              return True
     preload_static_archive _paths name
        = do b <- doesFileExist name
             if not b then return False
-                     else do if cDYNAMIC_GHC_PROGRAMS
+                     else do if dynamicGhc
                                  then panic "Loading archives not supported"
                                  else loadArchive name
                              return True
@@ -496,7 +505,7 @@ checkNonStdWay dflags srcspan =
     -- whereas we have __stginit_base_Prelude_.
       else if objectSuf dflags == normalObjectSuffix && not (null haskellWays)
       then failNonStd dflags srcspan
-      else return $ Just $ if cDYNAMIC_GHC_PROGRAMS
+      else return $ Just $ if dynamicGhc
                            then "dyn_o"
                            else "o"
     where haskellWays = filter (not . wayRTSOnly) (ways dflags)
@@ -509,7 +518,7 @@ failNonStd dflags srcspan = dieWith dflags srcspan $
   ptext (sLit "Dynamic linking required, but this is a non-standard build (eg. prof).") $$
   ptext (sLit "You need to build the program twice: once the") <+> ghciWay <+> ptext (sLit "way, and then") $$
   ptext (sLit "in the desired way using -osuf to set the object file suffix.")
-    where ghciWay = if cDYNAMIC_GHC_PROGRAMS
+    where ghciWay = if dynamicGhc
                     then ptext (sLit "dynamic")
                     else ptext (sLit "normal")
 
@@ -518,34 +527,33 @@ getLinkDeps :: HscEnv -> HomePackageTable
             -> Maybe FilePath                   -- replace object suffices?
             -> SrcSpan                          -- for error messages
             -> [Module]                         -- If you need these
-            -> IO ([Linkable], [PackageId])     -- ... then link these first
+            -> IO ([Linkable], [PackageKey])     -- ... then link these first
 -- Fails with an IO exception if it can't find enough files
 
 getLinkDeps hsc_env hpt pls replace_osuf span mods
 -- Find all the packages and linkables that a set of modules depends on
  = do {
         -- 1.  Find the dependent home-pkg-modules/packages from each iface
-        -- (omitting iINTERACTIVE, which is already linked)
-        (mods_s, pkgs_s) <- follow_deps (filter ((/=) iNTERACTIVE) mods)
+        -- (omitting modules from the interactive package, which is already linked)
+      ; (mods_s, pkgs_s) <- follow_deps (filterOut isInteractiveModule mods)
                                         emptyUniqSet emptyUniqSet;
 
-        let {
+      ; let {
         -- 2.  Exclude ones already linked
         --      Main reason: avoid findModule calls in get_linkable
             mods_needed = mods_s `minusList` linked_mods     ;
             pkgs_needed = pkgs_s `minusList` pkgs_loaded pls ;
 
             linked_mods = map (moduleName.linkableModule)
-                                (objs_loaded pls ++ bcos_loaded pls)
-        } ;
+                                (objs_loaded pls ++ bcos_loaded pls)  }
 
         -- 3.  For each dependent module, find its linkable
         --     This will either be in the HPT or (in the case of one-shot
         --     compilation) we may need to use maybe_getFileLinkable
-        let { osuf = objectSuf dflags } ;
-        lnks_needed <- mapM (get_linkable osuf) mods_needed ;
+      ; let { osuf = objectSuf dflags }
+      ; lnks_needed <- mapM (get_linkable osuf) mods_needed
 
-        return (lnks_needed, pkgs_needed) }
+      ; return (lnks_needed, pkgs_needed) } 
   where
     dflags = hsc_dflags hsc_env
     this_pkg = thisPackage dflags
@@ -557,8 +565,8 @@ getLinkDeps hsc_env hpt pls replace_osuf span mods
         -- tree recursively.  See bug #936, testcase ghci/prog007.
     follow_deps :: [Module]             -- modules to follow
                 -> UniqSet ModuleName         -- accum. module dependencies
-                -> UniqSet PackageId          -- accum. package dependencies
-                -> IO ([ModuleName], [PackageId]) -- result
+                -> UniqSet PackageKey          -- accum. package dependencies
+                -> IO ([ModuleName], [PackageKey]) -- result
     follow_deps []     acc_mods acc_pkgs
         = return (uniqSetToList acc_mods, uniqSetToList acc_pkgs)
     follow_deps (mod:mods) acc_mods acc_pkgs
@@ -572,7 +580,7 @@ getLinkDeps hsc_env hpt pls replace_osuf span mods
           when (mi_boot iface) $ link_boot_mod_error mod
 
           let
-            pkg = modulePackageId mod
+            pkg = modulePackageKey mod
             deps  = mi_deps iface
 
             pkg_deps = dep_pkgs deps
@@ -783,7 +791,7 @@ dynLinkObjs dflags pls objs = do
             unlinkeds                = concatMap linkableUnlinked new_objs
             wanted_objs              = map nameOfObject unlinkeds
 
-        if cDYNAMIC_GHC_PROGRAMS
+        if dynamicGhc
             then do dynLoadObjs dflags wanted_objs
                     return (pls1, Succeeded)
             else do mapM_ loadObj wanted_objs
@@ -970,7 +978,7 @@ unload_wkr _ linkables pls
       | linkableInSet lnk keep_linkables = return True
       -- We don't do any cleanup when linking objects with the dynamic linker.
       -- Doing so introduces extra complexity for not much benefit.
-      | cDYNAMIC_GHC_PROGRAMS = return False
+      | dynamicGhc = return False
       | otherwise
       = do mapM_ unloadObj [f | DotO f <- linkableUnlinked lnk]
                 -- The components of a BCO linkable may contain
@@ -1037,7 +1045,7 @@ showLS (Framework nm) = "(framework) " ++ nm
 -- automatically, and it doesn't matter what order you specify the input
 -- packages.
 --
-linkPackages :: DynFlags -> [PackageId] -> IO ()
+linkPackages :: DynFlags -> [PackageKey] -> IO ()
 -- NOTE: in fact, since each module tracks all the packages it depends on,
 --       we don't really need to use the package-config dependencies.
 --
@@ -1053,7 +1061,7 @@ linkPackages dflags new_pkgs = do
   modifyPLS_ $ \pls -> do
     linkPackages' dflags new_pkgs pls
 
-linkPackages' :: DynFlags -> [PackageId] -> PersistentLinkerState
+linkPackages' :: DynFlags -> [PackageKey] -> PersistentLinkerState
              -> IO PersistentLinkerState
 linkPackages' dflags new_pks pls = do
     pkgs' <- link (pkgs_loaded pls) new_pks
@@ -1062,7 +1070,7 @@ linkPackages' dflags new_pks pls = do
      pkg_map = pkgIdMap (pkgState dflags)
      ipid_map = installedPackageIdMap (pkgState dflags)
 
-     link :: [PackageId] -> [PackageId] -> IO [PackageId]
+     link :: [PackageKey] -> [PackageKey] -> IO [PackageKey]
      link pkgs new_pkgs =
          foldM link_one pkgs new_pkgs
 
@@ -1080,7 +1088,7 @@ linkPackages' dflags new_pks pls = do
              ; return (new_pkg : pkgs') }
 
         | otherwise
-        = throwGhcExceptionIO (CmdLineError ("unknown package: " ++ packageIdString new_pkg))
+        = throwGhcExceptionIO (CmdLineError ("unknown package: " ++ packageKeyString new_pkg))
 
 
 linkPackage :: DynFlags -> PackageConfig -> IO ()
@@ -1182,7 +1190,7 @@ locateLib dflags is_hs dirs lib
     --
   = findDll `orElse` findArchive `orElse` tryGcc `orElse` assumeDll
 
-  | not cDYNAMIC_GHC_PROGRAMS
+  | not dynamicGhc
     -- When the GHC package was not compiled as dynamic library
     -- (=DYNAMIC not set), we search for .o libraries or, if they
     -- don't exist, .a libraries.
@@ -1201,7 +1209,9 @@ locateLib dflags is_hs dirs lib
      mk_hs_dyn_lib_path dir = dir </> mkHsSOName platform hs_dyn_lib_name
 
      so_name = mkSOName platform lib
-     mk_dyn_lib_path dir = dir </> so_name
+     mk_dyn_lib_path dir = case (arch, os) of
+                             (ArchX86_64, OSSolaris2) -> dir </> ("64/" ++ so_name)
+                             _ -> dir </> so_name
 
      findObject     = liftM (fmap Object)  $ findFile mk_obj_path        dirs
      findDynObject  = liftM (fmap Object)  $ findFile mk_dyn_obj_path    dirs
@@ -1218,6 +1228,8 @@ locateLib dflags is_hs dirs lib
                            Nothing -> g
 
      platform = targetPlatform dflags
+     arch = platformArch platform
+     os = platformOS platform
 
 searchForLibUsingGcc :: DynFlags -> String -> [FilePath] -> IO (Maybe FilePath)
 searchForLibUsingGcc dflags so dirs = do

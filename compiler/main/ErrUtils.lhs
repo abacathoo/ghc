@@ -4,17 +4,21 @@
 \section[ErrsUtils]{Utilities for error reporting}
 
 \begin{code}
+{-# LANGUAGE CPP #-}
 
 module ErrUtils (
+        MsgDoc, 
+        Validity(..), andValid, allValid, isValid, getInvalids,
+
         ErrMsg, WarnMsg, Severity(..),
         Messages, ErrorMessages, WarningMessages,
-        errMsgSpans, errMsgContext, errMsgShortDoc, errMsgExtraInfo,
-        MsgDoc, mkLocMessage, pprMessageBag, pprErrMsgBag, pprErrMsgBagWithLoc,
+        errMsgSpan, errMsgContext, errMsgShortDoc, errMsgExtraInfo,
+        mkLocMessage, pprMessageBag, pprErrMsgBag, pprErrMsgBagWithLoc,
         pprLocErrMsg, makeIntoWarning,
-        
+
         errorsFound, emptyMessages, isEmptyMessages,
         mkErrMsg, mkPlainErrMsg, mkLongErrMsg, mkWarnMsg, mkPlainWarnMsg,
-        printBagOfErrors, 
+        printBagOfErrors,
         warnIsErrorMsg, mkLongWarnMsg,
 
         ghcExit,
@@ -45,7 +49,7 @@ import DynFlags
 
 import System.Directory
 import System.Exit      ( ExitCode(..), exitWith )
-import System.FilePath
+import System.FilePath  ( takeDirectory, (</>) )
 import Data.List
 import qualified Data.Set as Set
 import Data.IORef
@@ -55,6 +59,29 @@ import Control.Monad
 import Control.Monad.IO.Class
 import System.IO
 
+-------------------------
+type MsgDoc  = SDoc
+
+-------------------------
+data Validity
+  = IsValid            -- Everything is fine
+  | NotValid MsgDoc    -- A problem, and some indication of why
+
+isValid :: Validity -> Bool
+isValid IsValid       = True
+isValid (NotValid {}) = False
+
+andValid :: Validity -> Validity -> Validity
+andValid IsValid v = v
+andValid v _       = v
+
+allValid :: [Validity] -> Validity   -- If they aren't all valid, return the first
+allValid []       = IsValid
+allValid (v : vs) = v `andValid` allValid vs
+
+getInvalids :: [Validity] -> [MsgDoc]
+getInvalids vs = [d | NotValid d <- vs]
+
 -- -----------------------------------------------------------------------------
 -- Basic error messages: just render a message with a source location.
 
@@ -63,7 +90,7 @@ type WarningMessages = Bag WarnMsg
 type ErrorMessages   = Bag ErrMsg
 
 data ErrMsg = ErrMsg {
-        errMsgSpans     :: [SrcSpan],
+        errMsgSpan      :: SrcSpan,
         errMsgContext   :: PrintUnqualified,
         errMsgShortDoc  :: MsgDoc,   -- errMsgShort* should always
         errMsgShortString :: String, -- contain the same text
@@ -73,7 +100,6 @@ data ErrMsg = ErrMsg {
         -- The SrcSpan is used for sorting errors into line-number order
 
 type WarnMsg = ErrMsg
-type MsgDoc = SDoc
 
 data Severity
   = SevOutput
@@ -115,7 +141,7 @@ makeIntoWarning err = err { errMsgSeverity = SevWarning }
 
 mk_err_msg :: DynFlags -> Severity -> SrcSpan -> PrintUnqualified -> MsgDoc -> SDoc -> ErrMsg
 mk_err_msg  dflags sev locn print_unqual msg extra
- = ErrMsg { errMsgSpans = [locn], errMsgContext = print_unqual
+ = ErrMsg { errMsgSpan = locn, errMsgContext = print_unqual
           , errMsgShortDoc = msg , errMsgShortString = showSDoc dflags msg
           , errMsgExtraInfo = extra
           , errMsgSeverity = sev }
@@ -165,29 +191,26 @@ pprErrMsgBagWithLoc :: Bag ErrMsg -> [SDoc]
 pprErrMsgBagWithLoc bag = [ pprLocErrMsg item | item <- sortMsgBag bag ]
 
 pprLocErrMsg :: ErrMsg -> SDoc
-pprLocErrMsg (ErrMsg { errMsgSpans     = spans
+pprLocErrMsg (ErrMsg { errMsgSpan      = s
                      , errMsgShortDoc  = d
                      , errMsgExtraInfo = e
                      , errMsgSeverity  = sev
                      , errMsgContext   = unqual })
   = sdocWithDynFlags $ \dflags ->
     withPprStyle (mkErrStyle dflags unqual) (mkLocMessage sev s (d $$ e))
-  where
-    (s : _) = spans   -- Should be non-empty
 
 printMsgBag :: DynFlags -> Bag ErrMsg -> IO ()
 printMsgBag dflags bag
   = sequence_ [ let style = mkErrStyle dflags unqual
                 in log_action dflags dflags sev s style (d $$ e)
-              | ErrMsg { errMsgSpans     = s:_,
+              | ErrMsg { errMsgSpan      = s,
                          errMsgShortDoc  = d,
                          errMsgSeverity  = sev,
                          errMsgExtraInfo = e,
                          errMsgContext   = unqual } <- sortMsgBag bag ]
 
 sortMsgBag :: Bag ErrMsg -> [ErrMsg]
-sortMsgBag bag = sortBy (comparing (head . errMsgSpans)) $ bagToList bag
-                 -- TODO: Why "head ."? Why not compare the whole list?
+sortMsgBag bag = sortBy (comparing errMsgSpan) $ bagToList bag
 
 ghcExit :: DynFlags -> Int -> IO ()
 ghcExit dflags val

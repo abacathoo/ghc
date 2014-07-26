@@ -6,6 +6,8 @@
 Pattern-matching literal patterns
 
 \begin{code}
+{-# LANGUAGE CPP, ScopedTypeVariables #-}
+
 module MatchLit ( dsLit, dsOverLit, hsLitKey, hsOverLitKey
                 , tidyLitPat, tidyNPat
                 , matchLiterals, matchNPlusKPats, matchNPats
@@ -140,7 +142,7 @@ warnAboutIdentities dflags (Var conv_fn) type_of_conv
   , arg_ty `eqType` res_ty  -- So we are converting  ty -> ty
   = warnDs (vcat [ ptext (sLit "Call of") <+> ppr conv_fn <+> dcolon <+> ppr type_of_conv
                  , nest 2 $ ptext (sLit "can probably be omitted")
-                 , parens (ptext (sLit "Use -fno-warn-identities to suppress this messsage)"))
+                 , parens (ptext (sLit "Use -fno-warn-identities to suppress this message"))
            ])
 warnAboutIdentities _ _ _ = return ()
 
@@ -157,27 +159,46 @@ warnAboutOverflowedLiterals :: DynFlags -> HsOverLit Id -> DsM ()
 warnAboutOverflowedLiterals dflags lit
  | wopt Opt_WarnOverflowedLiterals dflags
  , Just (i, tc) <- getIntegralLit lit
- , let check :: forall a. (Bounded a, Integral a) => a -> DsM ()
-       check _proxy
-         = when (i < toInteger (minBound :: a) ||
-                 i > toInteger (maxBound :: a)) $
-           warnDs (ptext (sLit "Literal") <+> integer i <+>
-                   ptext (sLit "of type") <+> ppr tc <+>
-                   ptext (sLit "overflows"))
-  = if      tc == intTyConName    then check (undefined :: Int)
-    else if tc == int8TyConName   then check (undefined :: Int8)
-    else if tc == int16TyConName  then check (undefined :: Int16)
-    else if tc == int32TyConName  then check (undefined :: Int32)
-    else if tc == int64TyConName  then check (undefined :: Int64)
-    else if tc == wordTyConName   then check (undefined :: Word)
-    else if tc == word8TyConName  then check (undefined :: Word8)
-    else if tc == word16TyConName then check (undefined :: Word16)
-    else if tc == word32TyConName then check (undefined :: Word32)
-    else if tc == word64TyConName then check (undefined :: Word64)
+  = if      tc == intTyConName    then check i tc (undefined :: Int)
+    else if tc == int8TyConName   then check i tc (undefined :: Int8)
+    else if tc == int16TyConName  then check i tc (undefined :: Int16)
+    else if tc == int32TyConName  then check i tc (undefined :: Int32)
+    else if tc == int64TyConName  then check i tc (undefined :: Int64)
+    else if tc == wordTyConName   then check i tc (undefined :: Word)
+    else if tc == word8TyConName  then check i tc (undefined :: Word8)
+    else if tc == word16TyConName then check i tc (undefined :: Word16)
+    else if tc == word32TyConName then check i tc (undefined :: Word32)
+    else if tc == word64TyConName then check i tc (undefined :: Word64)
     else return ()
 
   | otherwise = return ()
+  where
+    check :: forall a. (Bounded a, Integral a) => Integer -> Name -> a -> DsM ()
+    check i tc _proxy
+      = when (i < minB || i > maxB) $ do
+        warnDs (vcat [ ptext (sLit "Literal") <+> integer i
+                       <+> ptext (sLit "is out of the") <+> ppr tc <+> ptext (sLit "range")
+                       <+> integer minB <> ptext (sLit "..") <> integer maxB
+                     , sug ])
+      where
+        minB = toInteger (minBound :: a)
+        maxB = toInteger (maxBound :: a)
+        sug | minB == -i   -- Note [Suggest NegativeLiterals]
+            , i > 0
+            , not (xopt Opt_NegativeLiterals dflags)
+            = ptext (sLit "If you are trying to write a large negative literal, use NegativeLiterals")
+            | otherwise = empty
 \end{code}
+
+Note [Suggest NegativeLiterals]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If you write
+  x :: Int8
+  x = -128
+it'll parse as (negate 128), and overflow.  In this case, suggest NegativeLiterals.
+We get an erroneous suggestion for
+  x = 128
+but perhaps that does not matter too much.
 
 \begin{code}
 warnAboutEmptyEnumerations :: DynFlags -> LHsExpr Id -> Maybe (LHsExpr Id) -> LHsExpr Id -> DsM ()
@@ -213,11 +234,16 @@ warnAboutEmptyEnumerations dflags fromExpr mThnExpr toExpr
   | otherwise = return ()
 
 getLHsIntegralLit :: LHsExpr Id -> Maybe (Integer, Name)
+-- See if the expression is an Integral literal
+-- Remember to look through automatically-added tick-boxes! (Trac #8384)
+getLHsIntegralLit (L _ (HsPar e))            = getLHsIntegralLit e
+getLHsIntegralLit (L _ (HsTick _ e))         = getLHsIntegralLit e
+getLHsIntegralLit (L _ (HsBinTick _ _ e))    = getLHsIntegralLit e
 getLHsIntegralLit (L _ (HsOverLit over_lit)) = getIntegralLit over_lit
 getLHsIntegralLit _ = Nothing
 
 getIntegralLit :: HsOverLit Id -> Maybe (Integer, Name)
-getIntegralLit (OverLit { ol_val = HsIntegral i, ol_type = ty }) 
+getIntegralLit (OverLit { ol_val = HsIntegral i, ol_type = ty })
   | Just tc <- tyConAppTyCon_maybe ty
   = Just (i, tyConName tc)
 getIntegralLit _ = Nothing
@@ -240,8 +266,8 @@ tidyLitPat :: HsLit -> Pat Id
 tidyLitPat (HsChar c) = unLoc (mkCharLitPat c)
 tidyLitPat (HsString s)
   | lengthFS s <= 1     -- Short string literals only
-  = unLoc $ foldr (\c pat -> mkPrefixConPat consDataCon [mkCharLitPat c, pat] stringTy)
-                  (mkNilPat stringTy) (unpackFS s)
+  = unLoc $ foldr (\c pat -> mkPrefixConPat consDataCon [mkCharLitPat c, pat] [charTy])
+                  (mkNilPat charTy) (unpackFS s)
         -- The stringTy is the type of the whole pattern, not
         -- the type to instantiate (:) or [] with!
 tidyLitPat lit = LitPat lit
@@ -260,7 +286,7 @@ tidyNPat tidy_lit_pat (OverLit val False _ ty) mb_neg _
         -- Once that is settled, look for cases where the type of the
         -- entire overloaded literal matches the type of the underlying literal,
         -- and in that case take the short cut
-        -- NB: Watch out for wierd cases like Trac #3382
+        -- NB: Watch out for weird cases like Trac #3382
         --        f :: Int -> Int
         --        f "blah" = 4
         --     which might be ok if we hvae 'instance IsString Int'
@@ -273,7 +299,7 @@ tidyNPat tidy_lit_pat (OverLit val False _ ty) mb_neg _
   | isStringTy ty, Just str_lit <- mb_str_lit = tidy_lit_pat (HsString str_lit)
   where
     mk_con_pat :: DataCon -> HsLit -> Pat Id
-    mk_con_pat con lit = unLoc (mkPrefixConPat con [noLoc $ LitPat lit] ty)
+    mk_con_pat con lit = unLoc (mkPrefixConPat con [noLoc $ LitPat lit] [])
 
     mb_int_lit :: Maybe Integer
     mb_int_lit = case (mb_neg, val) of

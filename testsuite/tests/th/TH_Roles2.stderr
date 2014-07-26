@@ -1,0 +1,11 @@
+TYPE SIGNATURES
+TYPE CONSTRUCTORS
+  type role T representational
+  data T (a :: k)
+COERCION AXIOMS
+Dependent modules: []
+Dependent packages: [base, ghc-prim, integer-gmp, pretty-1.1.1.1,
+                     template-haskell]
+
+==================== Typechecker ====================
+

@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 -- ----------------------------------------------------------------------------
 -- | Base LLVM Code Generation module
 --
@@ -404,7 +406,7 @@ strDisplayName_llvm lbl = do
     dflags <- getDynFlags
     let sdoc = pprCLabel platform lbl
         depth = Outp.PartWay 1
-        style = Outp.mkUserStyle (const Outp.NameNotInScope2, const True) depth
+        style = Outp.mkUserStyle (\ _ _ -> Outp.NameNotInScope2, Outp.alwaysQualifyModules) depth
         str = Outp.renderWithStyle dflags sdoc style
     return (fsLit (dropInfoSuffix str))
 
@@ -422,7 +424,7 @@ strProcedureName_llvm lbl = do
     dflags <- getDynFlags
     let sdoc = pprCLabel platform lbl
         depth = Outp.PartWay 1
-        style = Outp.mkUserStyle (const Outp.NameUnqual, const False) depth
+        style = Outp.mkUserStyle Outp.neverQualify depth
         str = Outp.renderWithStyle dflags sdoc style
     return (fsLit str)
 

@@ -1,0 +1,4 @@
+
+T7019a.hs:11:8:
+    Illegal constraint: forall b. Context (Associated a b)
+    In the class declaration for ‘Class’

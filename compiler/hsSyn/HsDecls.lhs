@@ -29,7 +29,7 @@ module HsDecls (
   InstDecl(..), LInstDecl, NewOrData(..), FamilyInfo(..),
   TyFamInstDecl(..), LTyFamInstDecl, instDeclDataFamInsts,
   DataFamInstDecl(..), LDataFamInstDecl, pprDataFamInstFlavour,
-  TyFamInstEqn(..), LTyFamInstEqn,
+  TyFamEqn(..), TyFamInstEqn, LTyFamInstEqn, TyFamDefltEqn, LTyFamDefltEqn,
   LClsInstDecl, ClsInstDecl(..),
 
   -- ** Standalone deriving declarations
@@ -42,8 +42,8 @@ module HsDecls (
   lvectDeclName, lvectInstDecl,
   -- ** @default@ declarations
   DefaultDecl(..), LDefaultDecl,
-  -- ** Top-level template haskell splice
-  SpliceDecl(..),
+  -- ** Template haskell declaration splice
+  SpliceDecl(..), LSpliceDecl,
   -- ** Foreign function interface declarations
   ForeignDecl(..), LForeignDecl, ForeignImport(..), ForeignExport(..),
   noForeignImportCoercionYet, noForeignExportCoercionYet,
@@ -67,7 +67,7 @@ module HsDecls (
     ) where
 
 -- friends:
-import {-# SOURCE #-}   HsExpr( LHsExpr, HsExpr, pprExpr )
+import {-# SOURCE #-}   HsExpr( LHsExpr, HsExpr, HsSplice, pprExpr, pprUntypedSplice )
         -- Because Expr imports Decls via HsBracket
 
 import HsBinds
@@ -142,6 +142,7 @@ data HsDecl id
 data HsGroup id
   = HsGroup {
         hs_valds  :: HsValBinds id,
+        hs_splcds :: [LSpliceDecl id],
 
         hs_tyclds :: [TyClGroup id],
                 -- A list of mutually-recursive groups
@@ -177,12 +178,14 @@ emptyGroup = HsGroup { hs_tyclds = [], hs_instds = [],
                        hs_fixds = [], hs_defds = [], hs_annds = [],
                        hs_fords = [], hs_warnds = [], hs_ruleds = [], hs_vects = [],
                        hs_valds = error "emptyGroup hs_valds: Can't happen",
+                       hs_splcds = [],
                        hs_docs = [] }
 
 appendGroups :: HsGroup a -> HsGroup a -> HsGroup a
 appendGroups 
     HsGroup { 
         hs_valds  = val_groups1,
+        hs_splcds = spliceds1,
         hs_tyclds = tyclds1, 
         hs_instds = instds1,
         hs_derivds = derivds1,
@@ -196,6 +199,7 @@ appendGroups
   hs_docs   = docs1 }
     HsGroup { 
         hs_valds  = val_groups2,
+        hs_splcds = spliceds2,
         hs_tyclds = tyclds2, 
         hs_instds = instds2,
         hs_derivds = derivds2,
@@ -210,6 +214,7 @@ appendGroups
   = 
     HsGroup { 
         hs_valds  = val_groups1 `plusHsValBinds` val_groups2,
+        hs_splcds = spliceds1 ++ spliceds2, 
         hs_tyclds = tyclds1 ++ tyclds2, 
         hs_instds = instds1 ++ instds2,
         hs_derivds = derivds1 ++ derivds2,
@@ -276,15 +281,16 @@ instance OutputableBndr name => Outputable (HsGroup name) where
           vcat_mb gap (Nothing : ds) = vcat_mb gap ds
           vcat_mb gap (Just d  : ds) = gap $$ d $$ vcat_mb blankLine ds
 
+type LSpliceDecl name = Located (SpliceDecl name)
 data SpliceDecl id 
   = SpliceDecl                  -- Top level splice
-        (Located (HsExpr id))
+        (Located (HsSplice id))
         HsExplicitFlag          -- Explicit <=> $(f x y)
                                 -- Implicit <=> f x y,  i.e. a naked top level expression
     deriving (Data, Typeable)
 
 instance OutputableBndr name => Outputable (SpliceDecl name) where
-   ppr (SpliceDecl e _) = ptext (sLit "$") <> parens (pprExpr (unLoc e))
+   ppr (SpliceDecl (L _ e) _) = pprUntypedSplice e
 \end{code}
 
 
@@ -466,7 +472,7 @@ data TyClDecl name
                 tcdSigs    :: [LSig name],              -- ^ Methods' signatures
                 tcdMeths   :: LHsBinds name,            -- ^ Default methods
                 tcdATs     :: [LFamilyDecl name],       -- ^ Associated types; ie
-                tcdATDefs  :: [LTyFamInstDecl name],    -- ^ Associated type defaults
+                tcdATDefs  :: [LTyFamDefltEqn name],    -- ^ Associated type defaults
                 tcdDocs    :: [LDocDecl],               -- ^ Haddock docs
                 tcdFVs     :: NameSet
     }
@@ -567,7 +573,7 @@ tyFamInstDeclName = unLoc . tyFamInstDeclLName
 tyFamInstDeclLName :: OutputableBndr name
                    => TyFamInstDecl name -> Located name
 tyFamInstDeclLName (TyFamInstDecl { tfid_eqn =
-                     (L _ (TyFamInstEqn { tfie_tycon = ln })) })
+                     (L _ (TyFamEqn { tfe_tycon = ln })) })
   = ln
 
 tyClDeclLName :: TyClDecl name -> Located name
@@ -626,7 +632,7 @@ instance OutputableBndr name
       | otherwise       -- Laid out
       = vcat [ top_matter <+> ptext (sLit "where")
              , nest 2 $ pprDeclList (map ppr ats ++
-                                     map ppr at_defs ++
+                                     map ppr_fam_deflt_eqn at_defs ++
                                      pprLHsBindsForUser methods sigs) ]
       where
         top_matter = ptext (sLit "class") 
@@ -651,7 +657,7 @@ instance (OutputableBndr name) => Outputable (FamilyDecl name) where
             ClosedTypeFamily eqns -> ( ptext (sLit "where")
                                      , if null eqns
                                        then ptext (sLit "..")
-                                       else vcat $ map ppr eqns )
+                                       else vcat $ map ppr_fam_inst_eqn eqns )
             _                     -> (empty, empty)
 
 pprFlavour :: FamilyInfo name -> SDoc
@@ -672,7 +678,7 @@ pp_vanilla_decl_head thing tyvars context
 
 pp_fam_inst_lhs :: OutputableBndr name
    => Located name
-   -> HsWithBndrs [LHsType name]
+   -> HsTyPats name
    -> HsContext name
    -> SDoc
 pp_fam_inst_lhs thing (HsWB { hswb_cts = typats }) context -- explicit type patterns
@@ -680,12 +686,13 @@ pp_fam_inst_lhs thing (HsWB { hswb_cts = typats }) context -- explicit type patt
           , hsep (map (pprParendHsType.unLoc) typats)]
 
 pprTyClDeclFlavour :: TyClDecl a -> SDoc
-pprTyClDeclFlavour (ClassDecl {})  = ptext (sLit "class")
-pprTyClDeclFlavour (FamDecl {})    = ptext (sLit "family")
-pprTyClDeclFlavour (SynDecl {})    = ptext (sLit "type")
-pprTyClDeclFlavour (DataDecl { tcdDataDefn = (HsDataDefn { dd_ND = nd }) })
-  = ppr nd
+pprTyClDeclFlavour (ClassDecl {})   = ptext (sLit "class")
+pprTyClDeclFlavour (SynDecl {})     = ptext (sLit "type")
 pprTyClDeclFlavour (ForeignType {}) = ptext (sLit "foreign type")
+pprTyClDeclFlavour (FamDecl { tcdFam = FamilyDecl { fdInfo = info }})
+  = pprFlavour info
+pprTyClDeclFlavour (DataDecl { tcdDataDefn = HsDataDefn { dd_ND = nd } })
+  = ppr nd
 \end{code}
 
 %************************************************************************
@@ -887,25 +894,49 @@ pprConDecl decl@(ConDecl { con_details = InfixCon ty1 ty2, con_res = ResTyGADT {
 %*                                                                      *
 %************************************************************************
 
+Note [Type family instance declarations in HsSyn]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The data type TyFamEqn represents one equation of a type family instance.
+It is parameterised over its tfe_pats field:
+
+ * An ordinary type family instance declaration looks like this in source Haskell
+      type instance T [a] Int = a -> a
+   (or something similar for a closed family)
+   It is represented by a TyFamInstEqn, with *type* in the tfe_pats field.
+
+ * On the other hand, the *default instance* of an associated type looksl like
+   this in source Haskell
+      class C a where
+        type T a b
+        type T a b = a -> b   -- The default instance
+   It is represented by a TyFamDefltEqn, with *type variables8 in the tfe_pats field.
+
 \begin{code}
 ----------------- Type synonym family instances -------------
+type LTyFamInstEqn  name = Located (TyFamInstEqn  name)
+type LTyFamDefltEqn name = Located (TyFamDefltEqn name)
 
-type LTyFamInstEqn name = Located (TyFamInstEqn name)
-
--- | One equation in a type family instance declaration
-data TyFamInstEqn name   
-  = TyFamInstEqn
-       { tfie_tycon :: Located name
-       , tfie_pats  :: HsWithBndrs [LHsType name]
+type HsTyPats name = HsWithBndrs [LHsType name]
             -- ^ Type patterns (with kind and type bndrs)
             -- See Note [Family instance declaration binders]
-       , tfie_rhs   :: LHsType name }         
+
+type TyFamInstEqn  name = TyFamEqn name (HsTyPats name)
+type TyFamDefltEqn name = TyFamEqn name (LHsTyVarBndrs name)
+  -- See Note [Type family instance declarations in HsSyn]
+
+-- | One equation in a type family instance declaration
+-- See Note [Type family instance declarations in HsSyn]
+data TyFamEqn name pats
+  = TyFamEqn
+       { tfe_tycon :: Located name
+       , tfe_pats  :: pats
+       , tfe_rhs   :: LHsType name }
   deriving( Typeable, Data )
 
 type LTyFamInstDecl name = Located (TyFamInstDecl name)
-data TyFamInstDecl name 
+data TyFamInstDecl name
   = TyFamInstDecl
-       { tfid_eqn  :: LTyFamInstEqn name 
+       { tfid_eqn  :: LTyFamInstEqn name
        , tfid_fvs  :: NameSet }
   deriving( Typeable, Data )
 
@@ -915,11 +946,9 @@ type LDataFamInstDecl name = Located (DataFamInstDecl name)
 data DataFamInstDecl name
   = DataFamInstDecl
        { dfid_tycon :: Located name
-       , dfid_pats  :: HsWithBndrs [LHsType name]   -- lhs
-            -- ^ Type patterns (with kind and type bndrs)
-            -- See Note [Family instance declaration binders]
-       , dfid_defn  :: HsDataDefn  name             -- rhs
-       , dfid_fvs   :: NameSet }                    -- free vars for dependency analysis
+       , dfid_pats  :: HsTyPats name      -- LHS
+       , dfid_defn  :: HsDataDefn  name   -- RHS
+       , dfid_fvs   :: NameSet }          -- Rree vars for dependency analysis
   deriving( Typeable, Data )
 
 
@@ -931,10 +960,11 @@ data ClsInstDecl name
       { cid_poly_ty :: LHsType name    -- Context => Class Instance-type
                                        -- Using a polytype means that the renamer conveniently
                                        -- figures out the quantified type variables for us.
-      , cid_binds :: LHsBinds name
-      , cid_sigs  :: [LSig name]                -- User-supplied pragmatic info
-      , cid_tyfam_insts :: [LTyFamInstDecl name]  -- type family instances
-      , cid_datafam_insts :: [LDataFamInstDecl name] -- data family instances
+      , cid_binds         :: LHsBinds name           -- Class methods
+      , cid_sigs          :: [LSig name]             -- User-supplied pragmatic info
+      , cid_tyfam_insts   :: [LTyFamInstDecl name]   -- Type family instances
+      , cid_datafam_insts :: [LDataFamInstDecl name] -- Data family instances
+      , cid_overlap_mode :: Maybe OverlapMode
       }
   deriving (Data, Typeable)
 
@@ -977,17 +1007,23 @@ instance (OutputableBndr name) => Outputable (TyFamInstDecl name) where
 
 pprTyFamInstDecl :: OutputableBndr name => TopLevelFlag -> TyFamInstDecl name -> SDoc
 pprTyFamInstDecl top_lvl (TyFamInstDecl { tfid_eqn = eqn })
-   = ptext (sLit "type") <+> ppr_instance_keyword top_lvl <+> (ppr eqn)
+   = ptext (sLit "type") <+> ppr_instance_keyword top_lvl <+> ppr_fam_inst_eqn eqn
 
 ppr_instance_keyword :: TopLevelFlag -> SDoc
 ppr_instance_keyword TopLevel    = ptext (sLit "instance")
 ppr_instance_keyword NotTopLevel = empty
 
-instance (OutputableBndr name) => Outputable (TyFamInstEqn name) where
-  ppr (TyFamInstEqn { tfie_tycon = tycon
-                    , tfie_pats  = pats
-                    , tfie_rhs   = rhs })
-    = (pp_fam_inst_lhs tycon pats []) <+> equals <+> (ppr rhs)
+ppr_fam_inst_eqn :: OutputableBndr name => LTyFamInstEqn name -> SDoc
+ppr_fam_inst_eqn (L _ (TyFamEqn { tfe_tycon = tycon
+                                , tfe_pats  = pats
+                                , tfe_rhs   = rhs }))
+    = pp_fam_inst_lhs tycon pats [] <+> equals <+> ppr rhs
+
+ppr_fam_deflt_eqn :: OutputableBndr name => LTyFamDefltEqn name -> SDoc
+ppr_fam_deflt_eqn (L _ (TyFamEqn { tfe_tycon = tycon
+                                 , tfe_pats  = tvs
+                                 , tfe_rhs   = rhs }))
+    = pp_vanilla_decl_head tycon tvs [] <+> equals <+> ppr rhs
 
 instance (OutputableBndr name) => Outputable (DataFamInstDecl name) where
   ppr = pprDataFamInstDecl TopLevel
@@ -1007,6 +1043,7 @@ pprDataFamInstFlavour (DataFamInstDecl { dfid_defn = (HsDataDefn { dd_ND = nd })
 instance (OutputableBndr name) => Outputable (ClsInstDecl name) where
     ppr (ClsInstDecl { cid_poly_ty = inst_ty, cid_binds = binds
                      , cid_sigs = sigs, cid_tyfam_insts = ats
+                     , cid_overlap_mode = mbOverlap
                      , cid_datafam_insts = adts })
       | null sigs, null ats, null adts, isEmptyBag binds  -- No "where" part
       = top_matter
@@ -1018,7 +1055,19 @@ instance (OutputableBndr name) => Outputable (ClsInstDecl name) where
                map (pprDataFamInstDecl NotTopLevel . unLoc) adts ++
                pprLHsBindsForUser binds sigs ]
       where
-        top_matter = ptext (sLit "instance") <+> ppr inst_ty
+        top_matter = ptext (sLit "instance") <+> ppOveralapPragma mbOverlap
+                                             <+> ppr inst_ty
+
+ppOveralapPragma :: Maybe OverlapMode -> SDoc
+ppOveralapPragma mb =
+  case mb of
+    Nothing          -> empty
+    Just NoOverlap   -> ptext (sLit "{-# NO_OVERLAP #-}")
+    Just OverlapOk   -> ptext (sLit "{-# OVERLAP #-}")
+    Just Incoherent  -> ptext (sLit "{-# INCOHERENT #-}")
+
+
+
 
 instance (OutputableBndr name) => Outputable (InstDecl name) where
     ppr (ClsInstD     { cid_inst  = decl }) = ppr decl
@@ -1046,12 +1095,14 @@ instDeclDataFamInsts inst_decls
 \begin{code}
 type LDerivDecl name = Located (DerivDecl name)
 
-data DerivDecl name = DerivDecl { deriv_type :: LHsType name }
+data DerivDecl name = DerivDecl { deriv_type :: LHsType name
+                                , deriv_overlap_mode :: Maybe OverlapMode
+                                }
   deriving (Data, Typeable)
 
 instance (OutputableBndr name) => Outputable (DerivDecl name) where
-    ppr (DerivDecl ty) 
-        = hsep [ptext (sLit "deriving instance"), ppr ty]
+    ppr (DerivDecl ty o)
+        = hsep [ptext (sLit "deriving instance"), ppOveralapPragma o, ppr ty]
 \end{code}
 
 %************************************************************************
@@ -1230,7 +1281,7 @@ instance OutputableBndr name => Outputable (RuleDecl name) where
                nest 4 (equals <+> pprExpr (unLoc rhs) <+> text "#-}") ]
         where
           pp_forall | null ns   = empty
-                    | otherwise = text "forall" <+> fsep (map ppr ns) <> dot
+                    | otherwise = forAllLit <+> fsep (map ppr ns) <> dot
 
 instance OutputableBndr name => Outputable (RuleBndr name) where
    ppr (RuleBndr name) = ppr name

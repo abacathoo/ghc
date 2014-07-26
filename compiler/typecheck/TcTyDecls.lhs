@@ -9,7 +9,8 @@ This stuff is only used for source-code decls; it's recorded in interface
 files for imported data types.
 
 \begin{code}
-{-# OPTIONS -fno-warn-tabs #-}
+{-# LANGUAGE CPP #-}
+{-# OPTIONS_GHC -fno-warn-tabs #-}
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
@@ -19,7 +20,7 @@ files for imported data types.
 module TcTyDecls(
         calcRecFlags, RecTyInfo(..), 
         calcSynCycles, calcClassCycles,
-        extractRoleAnnots, emptyRoleAnnots, RoleAnnots
+        RoleAnnots, extractRoleAnnots, emptyRoleAnnots, lookupRoleAnnots
     ) where
 
 #include "HsVersions.h"
@@ -120,7 +121,7 @@ synTyConsOfType ty
 mkSynEdges :: [LTyClDecl Name] -> [(LTyClDecl Name, Name, [Name])]
 mkSynEdges syn_decls = [ (ldecl, name, nameSetToList fvs)
                        | ldecl@(L _ (SynDecl { tcdLName = L _ name
-                                            , tcdFVs = fvs })) <- syn_decls ]
+                                             , tcdFVs = fvs })) <- syn_decls ]
 
 calcSynCycles :: [LTyClDecl Name] -> [SCC (LTyClDecl Name)]
 calcSynCycles = stronglyConnCompFromEdgedVertices . mkSynEdges
@@ -263,7 +264,7 @@ this for all newtypes, we'd get infinite types.  So we figure out for
 each newtype whether it is "recursive", and add a coercion if so.  In
 effect, we are trying to "cut the loops" by identifying a loop-breaker.
 
-2.  Avoid infinite unboxing.  This is nothing to do with newtypes.
+2.  Avoid infinite unboxing.  This has nothing to do with newtypes.
 Suppose we have
         data T = MkT Int T
         f (MkT x t) = f t
@@ -371,7 +372,7 @@ calcRecFlags boot_details is_boot mrole_env tyclss
         , rti_is_rec     = is_rec }
   where
     rec_tycon_names = mkNameSet (map tyConName all_tycons)
-    all_tycons = mapCatMaybes getTyCon tyclss
+    all_tycons = mapMaybe getTyCon tyclss
                    -- Recursion of newtypes/data types can happen via
                    -- the class TyCon, so tyclss includes the class tycons
 
@@ -547,6 +548,9 @@ extractRoleAnnots (TyClGroup { group_roles = roles })
 emptyRoleAnnots :: RoleAnnots
 emptyRoleAnnots = emptyNameEnv
 
+lookupRoleAnnots :: RoleAnnots -> Name -> Maybe (LRoleAnnotDecl Name)
+lookupRoleAnnots = lookupNameEnv
+
 \end{code}
 
 %************************************************************************
@@ -557,27 +561,27 @@ emptyRoleAnnots = emptyNameEnv
 
 Note [Role inference]
 ~~~~~~~~~~~~~~~~~~~~~
-The role inference algorithm uses class, datatype, and synonym definitions
-to infer the roles on the parameters. Although these roles are stored in the
-tycons, we can perform this algorithm on the built tycons, as long as we
-don't peek at an as-yet-unknown roles field! Ah, the magic of laziness.
+The role inference algorithm datatype definitions to infer the roles on the
+parameters. Although these roles are stored in the tycons, we can perform this
+algorithm on the built tycons, as long as we don't peek at an as-yet-unknown
+roles field! Ah, the magic of laziness.
 
-First, we choose appropriate initial roles. For families, roles (including
-initial roles) are N. For all other types, we start with the role in the
+First, we choose appropriate initial roles. For families and classes, roles
+(including initial roles) are N. For datatypes, we start with the role in the
 role annotation (if any), or otherwise use Phantom. This is done in
 initialRoleEnv1.
 
 The function irGroup then propagates role information until it reaches a
-fixpoint, preferring N over R, P and R over P. To aid in this, we have a monad
-RoleM, which is a combination reader and state monad. In its state are the
-current RoleEnv, which gets updated by role propagation, and an update bit,
-which we use to know whether or not we've reached the fixpoint. The
+fixpoint, preferring N over (R or P) and R over P. To aid in this, we have a
+monad RoleM, which is a combination reader and state monad. In its state are
+the current RoleEnv, which gets updated by role propagation, and an update
+bit, which we use to know whether or not we've reached the fixpoint. The
 environment of RoleM contains the tycon whose parameters we are inferring, and
 a VarEnv from parameters to their positions, so we can update the RoleEnv.
 Between tycons, this reader information is missing; it is added by
 addRoleInferenceInfo.
 
-There are two kinds of tycons to consider: algebraic ones (including classes)
+There are two kinds of tycons to consider: algebraic ones (excluding classes)
 and type synonyms. (Remember, families don't participate -- all their parameters
 are N.) An algebraic tycon processes each of its datacons, in turn. Note that
 a datacon's universally quantified parameters might be different from the parent
@@ -669,10 +673,10 @@ initialRoleEnv is_boot annots = extendNameEnvList emptyNameEnv .
 
 initialRoleEnv1 :: Bool -> RoleAnnots -> TyCon -> (Name, [Role])
 initialRoleEnv1 is_boot annots_env tc
-  | isFamilyTyCon tc = (name, map (const Nominal) tyvars)
-  |  isAlgTyCon tc
-  || isSynTyCon tc   = (name, default_roles)
-  | otherwise        = pprPanic "initialRoleEnv1" (ppr tc)
+  | isFamilyTyCon tc      = (name, map (const Nominal) tyvars)
+  | isAlgTyCon tc         = (name, default_roles)
+  | isTypeSynonymTyCon tc = (name, default_roles)
+  | otherwise             = pprPanic "initialRoleEnv1" (ppr tc)
   where name         = tyConName tc
         tyvars       = tyConTyVars tc
         (kvs, tvs)   = span isKindVar tyvars
@@ -687,7 +691,10 @@ initialRoleEnv1 is_boot annots_env tc
         default_roles = map (const Nominal) kvs ++
                         zipWith orElse role_annots (repeat default_role)
 
-        default_role = if is_boot then Representational else Phantom
+        default_role
+          | isClassTyCon tc = Nominal
+          | is_boot         = Representational
+          | otherwise       = Phantom
 
 irGroup :: RoleEnv -> [TyCon] -> RoleEnv
 irGroup env tcs
@@ -703,6 +710,8 @@ irTyCon tc
        ; unless (all (== Nominal) old_roles) $  -- also catches data families,
                                                 -- which don't want or need role inference
     do { whenIsJust (tyConClass_maybe tc) (irClass tc_name)
+       ; addRoleInferenceInfo tc_name (tyConTyVars tc) $
+         mapM_ (irType emptyVarSet) (tyConStupidTheta tc)  -- See #8958
        ; mapM_ (irDataCon tc_name) (visibleDataCons $ algTyConRhs tc) }}
 
   | Just (SynonymTyCon ty) <- synTyConRhs_maybe tc
@@ -772,7 +781,7 @@ lookupRoles tc
            Just roles -> return roles
            Nothing    -> return $ tyConRoles tc }
 
--- tries to update a role; won't even update a role "downwards"
+-- tries to update a role; won't ever update a role "downwards"
 updateRole :: Role -> TyVar -> RoleM ()
 updateRole role tv
   = do { var_ns <- getVarNs

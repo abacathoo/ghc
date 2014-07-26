@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 -----------------------------------------------------------------------------
 --
 -- Code generation for profiling
@@ -149,7 +151,7 @@ profDynAlloc :: SMRep -> CmmExpr -> FCode ()
 profDynAlloc rep ccs
   = ifProfiling $
     do dflags <- getDynFlags
-       profAlloc (mkIntExpr dflags (heapClosureSize dflags rep)) ccs
+       profAlloc (mkIntExpr dflags (heapClosureSizeW dflags rep)) ccs
 
 -- | Record the allocation of a closure (size is given by a CmmExpr)
 -- The size must be in words, because the allocation counter in a CCS counts
@@ -181,7 +183,7 @@ enterCostCentreFun ccs closure =
   ifProfiling $ do
     if isCurrentCCS ccs
        then do dflags <- getDynFlags
-               emitRtsCall rtsPackageId (fsLit "enterFunCCS")
+               emitRtsCall rtsPackageKey (fsLit "enterFunCCS")
                    [(CmmReg (CmmGlobal BaseReg), AddrHint),
                     (costCentreFrom dflags closure, AddrHint)] False
        else return () -- top-level function, nothing to do
@@ -283,7 +285,7 @@ emitSetCCC cc tick push
 pushCostCentre :: LocalReg -> CmmExpr -> CostCentre -> FCode ()
 pushCostCentre result ccs cc
   = emitRtsCallWithResult result AddrHint
-        rtsPackageId
+        rtsPackageKey
         (fsLit "pushCostCentre") [(ccs,AddrHint),
                                 (CmmLit (mkCCostCentre cc), AddrHint)]
         False
@@ -328,11 +330,12 @@ ldvRecordCreate closure = do dflags <- getDynFlags
 -- The closure is not IND or IND_OLDGEN because neither is considered for LDV
 -- profiling.
 --
-ldvEnterClosure :: ClosureInfo -> FCode ()
-ldvEnterClosure closure_info = do dflags <- getDynFlags
-                                  let tag = funTag dflags closure_info
-                                  ldvEnter (cmmOffsetB dflags (CmmReg nodeReg) (-tag))
-        -- don't forget to substract node's tag
+ldvEnterClosure :: ClosureInfo -> CmmReg -> FCode ()
+ldvEnterClosure closure_info node_reg = do
+    dflags <- getDynFlags
+    let tag = funTag dflags closure_info
+    -- don't forget to substract node's tag
+    ldvEnter (cmmOffsetB dflags (CmmReg node_reg) (-tag))
 
 ldvEnter :: CmmExpr -> FCode ()
 -- Argument is a closure pointer
@@ -353,7 +356,7 @@ ldvEnter cl_ptr = do
 
 loadEra :: DynFlags -> CmmExpr
 loadEra dflags = CmmMachOp (MO_UU_Conv (cIntWidth dflags) (wordWidth dflags))
-    [CmmLoad (mkLblExpr (mkCmmDataLabel rtsPackageId (fsLit "era")))
+    [CmmLoad (mkLblExpr (mkCmmDataLabel rtsPackageKey (fsLit "era")))
              (cInt dflags)]
 
 ldvWord :: DynFlags -> CmmExpr -> CmmExpr

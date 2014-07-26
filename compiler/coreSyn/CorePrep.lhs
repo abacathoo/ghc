@@ -5,7 +5,7 @@
 Core pass to saturate constructors and PrimOps
 
 \begin{code}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BangPatterns, CPP #-}
 
 module CorePrep (
       corePrepPgm, corePrepExpr, cvtLitInteger,
@@ -196,6 +196,7 @@ corePrepTopBinds initialCorePrepEnv binds
 
 mkDataConWorkers :: [TyCon] -> [CoreBind]
 -- See Note [Data constructor workers]
+-- c.f. Note [Injecting implicit bindings] in TidyPgm
 mkDataConWorkers data_tycons
   = [ NonRec id (Var id)        -- The ice is thin here, but it works
     | tycon <- data_tycons,     -- CorePrep will eta-expand it
@@ -807,15 +808,15 @@ ignoreTickish _ = False
 
 cpe_ExprIsTrivial :: CoreExpr -> Bool
 -- Version that doesn't consider an scc annotation to be trivial.
-cpe_ExprIsTrivial (Var _)                  = True
-cpe_ExprIsTrivial (Type _)                 = True
-cpe_ExprIsTrivial (Coercion _)             = True
-cpe_ExprIsTrivial (Lit _)                  = True
-cpe_ExprIsTrivial (App e arg)              = isTypeArg arg && cpe_ExprIsTrivial e
-cpe_ExprIsTrivial (Tick t e)             = not (tickishIsCode t) && cpe_ExprIsTrivial e
-cpe_ExprIsTrivial (Cast e _)               = cpe_ExprIsTrivial e
+cpe_ExprIsTrivial (Var _)        = True
+cpe_ExprIsTrivial (Type _)       = True
+cpe_ExprIsTrivial (Coercion _)   = True
+cpe_ExprIsTrivial (Lit _)        = True
+cpe_ExprIsTrivial (App e arg)    = isTypeArg arg && cpe_ExprIsTrivial e
+cpe_ExprIsTrivial (Tick t e)     = not (tickishIsCode t) && cpe_ExprIsTrivial e
+cpe_ExprIsTrivial (Cast e _)     = cpe_ExprIsTrivial e
 cpe_ExprIsTrivial (Lam b body) | isTyVar b = cpe_ExprIsTrivial body
-cpe_ExprIsTrivial _                        = False
+cpe_ExprIsTrivial _              = False
 \end{code}
 
 -- -----------------------------------------------------------------------------
@@ -1114,9 +1115,9 @@ data CorePrepEnv = CPE {
 
 lookupMkIntegerName :: DynFlags -> HscEnv -> IO Id
 lookupMkIntegerName dflags hsc_env
-    = if thisPackage dflags == primPackageId
+    = if thisPackage dflags == primPackageKey
       then return $ panic "Can't use Integer in ghc-prim"
-      else if thisPackage dflags == integerPackageId
+      else if thisPackage dflags == integerPackageKey
       then return $ panic "Can't use Integer in integer"
       else liftM tyThingId
          $ initTcForLookup hsc_env (tcLookupGlobal mkIntegerName)

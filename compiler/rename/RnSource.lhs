@@ -4,6 +4,8 @@
 \section[RnSource]{Main pass of renamer}
 
 \begin{code}
+{-# LANGUAGE CPP, ScopedTypeVariables #-}
+
 module RnSource (
         rnSrcDecls, addTcgDUs, rnTyClDecls, findSplice
     ) where
@@ -11,9 +13,8 @@ module RnSource (
 #include "HsVersions.h"
 
 import {-# SOURCE #-} RnExpr( rnLExpr )
-#ifdef GHCI
+import {-# SOURCE #-} RnSplice ( rnSpliceDecl )
 import {-# SOURCE #-} TcSplice ( runQuasiQuoteDecl )
-#endif /* GHCI */
 
 import HsSyn
 import RdrName
@@ -22,6 +23,7 @@ import RnBinds
 import RnEnv
 import RnNames
 import RnHsDoc          ( rnHsDoc, rnMbLHsDoc )
+import TcAnnotations    ( annCtxt )
 import TcRnMonad
 
 import ForeignCall      ( CCallTarget(..) )
@@ -60,7 +62,7 @@ for undefined tyvars, and tyvars in contexts that are ambiguous.
 (Some of this checking has now been moved to module @TcMonoType@,
 since we don't have functional dependency information at this point.)
 \item
-Checks that all variable occurences are defined.
+Checks that all variable occurrences are defined.
 \item
 Checks the @(..)@ etc constraints in the export list.
 \end{enumerate}
@@ -72,6 +74,7 @@ Checks the @(..)@ etc constraints in the export list.
 rnSrcDecls :: [Name] -> HsGroup RdrName -> RnM (TcGblEnv, HsGroup Name)
 -- Rename a HsGroup; used for normal source files *and* hs-boot files
 rnSrcDecls extra_deps group@(HsGroup { hs_valds   = val_decls,
+                                       hs_splcds  = splice_decls,
                                        hs_tyclds  = tycl_decls,
                                        hs_instds  = inst_decls,
                                        hs_derivds = deriv_decls,
@@ -113,6 +116,7 @@ rnSrcDecls extra_deps group@(HsGroup { hs_valds   = val_decls,
    let { val_binders = collectHsValBinders new_lhs ;
          all_bndrs   = addListToNameSet tc_bndrs val_binders ;
          val_avails  = map Avail val_binders  } ;
+   traceRn (text "rnSrcDecls" <+> ppr val_avails) ;
    (tcg_env, tcl_env) <- extendGlobalRdrEnvRn val_avails local_fix_env ;
    traceRn (ptext (sLit "Val binders") <+> (ppr val_binders)) ;
    setEnvs (tcg_env, tcl_env) $ do {
@@ -159,12 +163,14 @@ rnSrcDecls extra_deps group@(HsGroup { hs_valds   = val_decls,
    (rn_ann_decls,     src_fvs6) <- rnList rnAnnDecl       ann_decls ;
    (rn_default_decls, src_fvs7) <- rnList rnDefaultDecl   default_decls ;
    (rn_deriv_decls,   src_fvs8) <- rnList rnSrcDerivDecl  deriv_decls ;
+   (rn_splice_decls,  src_fvs9) <- rnList rnSpliceDecl    splice_decls ;
       -- Haddock docs; no free vars
    rn_docs <- mapM (wrapLocM rnDocDecl) docs ;
 
     last_tcg_env <- getGblEnv ;
    -- (I) Compute the results and return
    let {rn_group = HsGroup { hs_valds   = rn_val_decls,
+                             hs_splcds  = rn_splice_decls,
                              hs_tyclds  = rn_tycl_decls,
                              hs_instds  = rn_inst_decls,
                              hs_derivds = rn_deriv_decls,
@@ -182,7 +188,8 @@ rnSrcDecls extra_deps group@(HsGroup { hs_valds   = val_decls,
         ford_bndrs = hsForeignDeclsBinders rn_foreign_decls ;
         other_def  = (Just (mkNameSet tycl_bndrs `unionNameSets` mkNameSet ford_bndrs), emptyNameSet) ;
         other_fvs  = plusFVs [src_fvs1, src_fvs2, src_fvs3, src_fvs4,
-                              src_fvs5, src_fvs6, src_fvs7, src_fvs8] ;
+                              src_fvs5, src_fvs6, src_fvs7, src_fvs8,
+                              src_fvs9] ;
                 -- It is tiresome to gather the binders from type and class decls
 
         src_dus = [other_def] `plusDU` bind_dus `plusDU` usesOnly other_fvs ;
@@ -335,10 +342,12 @@ dupWarnDecl (L loc _) rdr_name
 
 \begin{code}
 rnAnnDecl :: AnnDecl RdrName -> RnM (AnnDecl Name, FreeVars)
-rnAnnDecl (HsAnnotation provenance expr) = do
-    (provenance', provenance_fvs) <- rnAnnProvenance provenance
-    (expr', expr_fvs) <- rnLExpr expr
-    return (HsAnnotation provenance' expr', provenance_fvs `plusFV` expr_fvs)
+rnAnnDecl ann@(HsAnnotation provenance expr)
+  = addErrCtxt (annCtxt ann) $
+    do { (provenance', provenance_fvs) <- rnAnnProvenance provenance
+       ; (expr', expr_fvs) <- setStage (Splice False) $
+                              rnLExpr expr
+       ; return (HsAnnotation provenance' expr', provenance_fvs `plusFV` expr_fvs) }
 
 rnAnnProvenance :: AnnProvenance RdrName -> RnM (AnnProvenance Name, FreeVars)
 rnAnnProvenance provenance = do
@@ -375,8 +384,8 @@ rnHsForeignDecl (ForeignImport name ty _ spec)
        ; (ty', fvs) <- rnLHsType (ForeignDeclCtx name) ty
 
         -- Mark any PackageTarget style imports as coming from the current package
-       ; let packageId = thisPackage $ hsc_dflags topEnv
-             spec'     = patchForeignImport packageId spec
+       ; let packageKey = thisPackage $ hsc_dflags topEnv
+             spec'      = patchForeignImport packageKey spec
 
        ; return (ForeignImport name' ty' noForeignImportCoercionYet spec', fvs) }
 
@@ -393,20 +402,20 @@ rnHsForeignDecl (ForeignExport name ty _ spec)
 --      package, so if they get inlined across a package boundry we'll still
 --      know where they're from.
 --
-patchForeignImport :: PackageId -> ForeignImport -> ForeignImport
-patchForeignImport packageId (CImport cconv safety fs spec)
-        = CImport cconv safety fs (patchCImportSpec packageId spec)
+patchForeignImport :: PackageKey -> ForeignImport -> ForeignImport
+patchForeignImport packageKey (CImport cconv safety fs spec)
+        = CImport cconv safety fs (patchCImportSpec packageKey spec)
 
-patchCImportSpec :: PackageId -> CImportSpec -> CImportSpec
-patchCImportSpec packageId spec
+patchCImportSpec :: PackageKey -> CImportSpec -> CImportSpec
+patchCImportSpec packageKey spec
  = case spec of
-        CFunction callTarget    -> CFunction $ patchCCallTarget packageId callTarget
+        CFunction callTarget    -> CFunction $ patchCCallTarget packageKey callTarget
         _                       -> spec
 
-patchCCallTarget :: PackageId -> CCallTarget -> CCallTarget
-patchCCallTarget packageId callTarget =
+patchCCallTarget :: PackageKey -> CCallTarget -> CCallTarget
+patchCCallTarget packageKey callTarget =
   case callTarget of
-  StaticTarget label Nothing isFun -> StaticTarget label (Just packageId) isFun
+  StaticTarget label Nothing isFun -> StaticTarget label (Just packageKey) isFun
   _                                -> callTarget
 
 
@@ -436,12 +445,14 @@ rnSrcInstDecl (ClsInstD { cid_inst = cid })
 rnClsInstDecl :: ClsInstDecl RdrName -> RnM (ClsInstDecl Name, FreeVars)
 rnClsInstDecl (ClsInstDecl { cid_poly_ty = inst_ty, cid_binds = mbinds
                            , cid_sigs = uprags, cid_tyfam_insts = ats
+                           , cid_overlap_mode = oflag
                            , cid_datafam_insts = adts })
         -- Used for both source and interface file decls
   = do { (inst_ty', inst_fvs) <- rnLHsInstType (text "In an instance declaration") inst_ty
        ; case splitLHsInstDeclTy_maybe inst_ty' of {
            Nothing -> return (ClsInstDecl { cid_poly_ty = inst_ty', cid_binds = emptyLHsBinds
                                           , cid_sigs = [], cid_tyfam_insts = []
+                                          , cid_overlap_mode = oflag
                                           , cid_datafam_insts = [] }
                              , inst_fvs) ;
            Just (inst_tyvars, _, L _ cls,_) ->
@@ -454,7 +465,7 @@ rnClsInstDecl (ClsInstDecl { cid_poly_ty = inst_ty, cid_binds = mbinds
        ; traceRn (text "rnSrcInstDecl"  <+> ppr inst_ty' $$ ppr inst_tyvars $$ ppr ktv_names)
        ; ((ats', adts', other_sigs'), more_fvs) 
              <- extendTyVarEnvFVRn ktv_names $
-                do { (ats', at_fvs) <- rnATInstDecls rnTyFamInstDecl cls inst_tyvars ats
+                do { (ats',  at_fvs)  <- rnATInstDecls rnTyFamInstDecl cls inst_tyvars ats
                    ; (adts', adt_fvs) <- rnATInstDecls rnDataFamInstDecl cls inst_tyvars adts
                    ; (other_sigs', sig_fvs) <- renameSigs (InstDeclCtxt cls) other_sigs
                    ; return ( (ats', adts', other_sigs')
@@ -484,6 +495,7 @@ rnClsInstDecl (ClsInstDecl { cid_poly_ty = inst_ty, cid_binds = mbinds
                           `plusFV` inst_fvs
        ; return (ClsInstDecl { cid_poly_ty = inst_ty', cid_binds = mbinds'
                              , cid_sigs = uprags', cid_tyfam_insts = ats'
+                             , cid_overlap_mode = oflag
                              , cid_datafam_insts = adts' },
                  all_fvs) } } }
              -- We return the renamed associated data type declarations so
@@ -552,14 +564,29 @@ rnTyFamInstDecl mb_cls (TyFamInstDecl { tfid_eqn = L loc eqn })
 rnTyFamInstEqn :: Maybe (Name, [Name])
                -> TyFamInstEqn RdrName
                -> RnM (TyFamInstEqn Name, FreeVars)
-rnTyFamInstEqn mb_cls (TyFamInstEqn { tfie_tycon = tycon
-                                    , tfie_pats  = HsWB { hswb_cts = pats }
-                                    , tfie_rhs   = rhs })
+rnTyFamInstEqn mb_cls (TyFamEqn { tfe_tycon = tycon
+                                , tfe_pats  = HsWB { hswb_cts = pats }
+                                , tfe_rhs   = rhs })
   = do { (tycon', pats', rhs', fvs) <-
            rnFamInstDecl (TySynCtx tycon) mb_cls tycon pats rhs rnTySyn
-       ; return (TyFamInstEqn { tfie_tycon = tycon'
-                              , tfie_pats  = pats'
-                              , tfie_rhs   = rhs' }, fvs) }
+       ; return (TyFamEqn { tfe_tycon = tycon'
+                          , tfe_pats  = pats'
+                          , tfe_rhs   = rhs' }, fvs) }
+
+rnTyFamDefltEqn :: Name
+                -> TyFamDefltEqn RdrName
+                -> RnM (TyFamDefltEqn Name, FreeVars)
+rnTyFamDefltEqn cls (TyFamEqn { tfe_tycon = tycon
+                              , tfe_pats  = tyvars
+                              , tfe_rhs   = rhs })
+  = bindHsTyVars ctx (Just cls) [] tyvars $ \ tyvars' ->
+    do { tycon'      <- lookupFamInstName (Just cls) tycon
+       ; (rhs', fvs) <- rnLHsType ctx rhs
+       ; return (TyFamEqn { tfe_tycon = tycon'
+                          , tfe_pats  = tyvars'
+                          , tfe_rhs   = rhs' }, fvs) }
+  where
+    ctx = TyFamilyCtx tycon
 
 rnDataFamInstDecl :: Maybe (Name, [Name])
                   -> DataFamInstDecl RdrName
@@ -578,7 +605,7 @@ rnDataFamInstDecl mb_cls (DataFamInstDecl { dfid_tycon = tycon
 Renaming of the associated types in instances.
 
 \begin{code}
--- rename associated type family decl in class
+-- Rename associated type family decl in class
 rnATDecls :: Name      -- Class
           -> [LFamilyDecl RdrName] 
           -> RnM ([LFamilyDecl Name], FreeVars)
@@ -610,8 +637,8 @@ type variable environment iff -fglasgow-exts
 
 \begin{code}
 extendTyVarEnvForMethodBinds :: [Name]
-                             -> RnM (Bag (LHsBind Name), FreeVars)
-                             -> RnM (Bag (LHsBind Name), FreeVars)
+                             -> RnM (LHsBinds Name, FreeVars)
+                             -> RnM (LHsBinds Name, FreeVars)
 extendTyVarEnvForMethodBinds ktv_names thing_inside
   = do  { scoped_tvs <- xoptM Opt_ScopedTypeVariables
         ; if scoped_tvs then
@@ -628,11 +655,11 @@ extendTyVarEnvForMethodBinds ktv_names thing_inside
 
 \begin{code}
 rnSrcDerivDecl :: DerivDecl RdrName -> RnM (DerivDecl Name, FreeVars)
-rnSrcDerivDecl (DerivDecl ty)
+rnSrcDerivDecl (DerivDecl ty overlap)
   = do { standalone_deriv_ok <- xoptM Opt_StandaloneDeriving
        ; unless standalone_deriv_ok (addErr standaloneDerivErr)
        ; (ty', fvs) <- rnLHsInstType (text "In a deriving declaration") ty
-       ; return (DerivDecl ty', fvs) }
+       ; return (DerivDecl ty' overlap, fvs) }
 
 standaloneDerivErr :: SDoc
 standaloneDerivErr
@@ -856,10 +883,10 @@ packages, it is safe not to add the dependencies on the .hs-boot stuff to B2.
 See also Note [Grouping of type and class declarations] in TcTyClsDecls.
 
 \begin{code}
-isInPackage :: PackageId -> Name -> Bool
+isInPackage :: PackageKey -> Name -> Bool
 isInPackage pkgId nm = case nameModule_maybe nm of
                          Nothing -> False
-                         Just m  -> pkgId == modulePackageId m
+                         Just m  -> pkgId == modulePackageKey m
 -- We use nameModule_maybe because we might be in a TH splice, in which case
 -- there is no module name. In that case we cannot have mutual dependencies,
 -- so it's fine to return False here.
@@ -887,12 +914,21 @@ rnTyClDecls extra_deps tycl_ds
 
              raw_groups = map flattenSCC sccs
              -- See Note [Role annotations in the renamer]
-             groups = [ TyClGroup { group_tyclds = gp
-                                  , group_roles = roles }
-                      | gp <- raw_groups
-                      , let roles = mapMaybe ( lookupNameEnv role_annot_env
-                                             . tcdName
-                                             . unLoc ) gp ]
+             (groups, orphan_roles)
+               = foldr (\group (groups_acc, orphans_acc) ->
+                         let names = map (tcdName . unLoc) group
+                             roles = mapMaybe (lookupNameEnv orphans_acc) names
+                             orphans' = delListFromNameEnv orphans_acc names
+                              -- there doesn't seem to be an interface to
+                              -- do the above more efficiently
+                         in ( TyClGroup { group_tyclds = group
+                                        , group_roles  = roles } : groups_acc
+                            , orphans' )
+                       )
+                       ([], role_annot_env)
+                       raw_groups
+                 
+       ; mapM_ orphanRoleAnnotErr (nameEnvElts orphan_roles)
        ; traceRn (text "rnTycl"  <+> (ppr ds_w_fvs $$ ppr sccs))
        ; return (groups, all_fvs) }
 
@@ -920,7 +956,7 @@ rnTyClDecl (SynDecl { tcdLName = tycon, tcdTyVars = tyvars, tcdRhs = rhs })
                                     do { (rhs', fvs) <- rnTySyn doc rhs
                                        ; return ((tyvars', rhs'), fvs) }
        ; return (SynDecl { tcdLName = tycon', tcdTyVars = tyvars'
-                        , tcdRhs = rhs', tcdFVs = fvs }, fvs) }
+                         , tcdRhs = rhs', tcdFVs = fvs }, fvs) }
 
 -- "data", "newtype" declarations
 -- both top level and (for an associated type) in an instance decl
@@ -945,20 +981,20 @@ rnTyClDecl (ClassDecl {tcdCtxt = context, tcdLName = lcls,
                         -- kind signatures on the tyvars
 
         -- Tyvars scope over superclass context and method signatures
-        ; ((tyvars', context', fds', ats', at_defs', sigs'), stuff_fvs)
+        ; ((tyvars', context', fds', ats', sigs'), stuff_fvs)
             <- bindHsTyVars cls_doc Nothing kvs tyvars $ \ tyvars' -> do
                   -- Checks for distinct tyvars
              { (context', cxt_fvs) <- rnContext cls_doc context
-             ; fds'  <- rnFds (docOfHsDocContext cls_doc) fds
+             ; fds'  <- rnFds fds
                          -- The fundeps have no free variables
              ; (ats',     fv_ats)     <- rnATDecls cls' ats
-             ; (at_defs', fv_at_defs) <- rnATInstDecls rnTyFamInstDecl cls' tyvars' at_defs
              ; (sigs', sig_fvs) <- renameSigs (ClsDeclCtxt cls') sigs
              ; let fvs = cxt_fvs     `plusFV`
                          sig_fvs     `plusFV`
-                         fv_ats      `plusFV`
-                         fv_at_defs
-             ; return ((tyvars', context', fds', ats', at_defs', sigs'), fvs) }
+                         fv_ats
+             ; return ((tyvars', context', fds', ats', sigs'), fvs) }
+
+        ; (at_defs', fv_at_defs) <- rnList (rnTyFamDefltEqn cls') at_defs
 
         -- No need to check for duplicate associated type decls
         -- since that is done by RnNames.extendGlobalRdrEnvRn
@@ -990,7 +1026,7 @@ rnTyClDecl (ClassDecl {tcdCtxt = context, tcdLName = lcls,
   -- Haddock docs
         ; docs' <- mapM (wrapLocM rnDocDecl) docs
 
-        ; let all_fvs = meth_fvs `plusFV` stuff_fvs
+        ; let all_fvs = meth_fvs `plusFV` stuff_fvs `plusFV` fv_at_defs
         ; return (ClassDecl { tcdCtxt = context', tcdLName = lcls',
                               tcdTyVars = tyvars', tcdFDs = fds', tcdSigs = sigs',
                               tcdMeths = mbinds', tcdATs = ats', tcdATDefs = at_defs',
@@ -1026,7 +1062,7 @@ rnRoleAnnots role_annots
   where
     rn_role_annot1 (RoleAnnotDecl tycon roles)
       = do {  -- the name is an *occurrence*
-             tycon' <- wrapLocM lookupGlobalOccInThisModule tycon
+             tycon' <- wrapLocM lookupGlobalOccRn tycon
            ; return $ RoleAnnotDecl tycon' roles }
 
 dupRoleAnnotErr :: [LRoleAnnotDecl RdrName] -> RnM ()
@@ -1044,6 +1080,15 @@ dupRoleAnnotErr list
                                       4 (text "-- written at" <+> ppr loc)
 
       cmp_annot (L loc1 _) (L loc2 _) = loc1 `compare` loc2
+
+orphanRoleAnnotErr :: LRoleAnnotDecl Name -> RnM ()
+orphanRoleAnnotErr (L loc decl)
+  = addErrAt loc $
+    hang (text "Role annotation for a type previously declared:")
+       2 (ppr decl) $$
+    parens (text "The role annotation must be given where" <+>
+            quotes (ppr $ roleAnnotDeclName decl) <+>
+            text "is declared.")
 
 rnDataDefn :: HsDocContext -> HsDataDefn RdrName -> RnM (HsDataDefn Name, FreeVars)
 rnDataDefn doc (HsDataDefn { dd_ND = new_or_data, dd_cType = cType
@@ -1181,14 +1226,25 @@ type, if any. Then, this map can be used to add the role annotations to the
 groups after dependency analysis.
 
 This process checks for duplicate role annotations, where we must be careful
-to filter out the unbound annotations to avoid reporting spurious duplicates.
-We hold off doing other checks until validity checking in the type checker.
+to do the check *before* renaming to avoid calling all unbound names duplicates
+of one another.
 
-Also, note that the tycon in a role annotation is renamed with
-lookupGlobalInThisModule. We want only annotations for local declarations.
-Because all of these are in scope by this point, this renaming technique
-also effectively identifies any orphan role annotations. Annotations on
-declarations that don't support them is checked for in the type-checker.
+The renaming process, as usual, might identify and report errors for unbound
+names. We exclude the annotations for unbound names in the annotation
+environment to avoid spurious errors for orphaned annotations.
+
+We then (in rnTyClDecls) do a check for orphan role annotations (role
+annotations without an accompanying type decl). The check works by folding
+over raw_groups (of type [[TyClDecl Name]]), selecting out the relevant
+role declarations for each group, as well as diminishing the annotation
+environment. After the fold is complete, anything left over in the name
+environment must be an orphan, and errors are generated.
+
+An earlier version of this algorithm short-cut the orphan check by renaming
+only with names declared in this module. But, this check is insufficient in
+the case of staged module compilation (Template Haskell, GHCi).
+See #8485. With the new lookup process (which includes types declared in other
+modules), we get better error messages, too.
 
 %*********************************************************
 %*                                                      *
@@ -1306,23 +1362,6 @@ deprecRecSyntax decl
 
 badRecResTy :: SDoc -> SDoc
 badRecResTy doc = ptext (sLit "Malformed constructor signature") $$ doc
-
--- This data decl will parse OK
---      data T = a Int
--- treating "a" as the constructor.
--- It is really hard to make the parser spot this malformation.
--- So the renamer has to check that the constructor is legal
---
--- We can get an operator as the constructor, even in the prefix form:
---      data T = :% Int Int
--- from interface files, which always print in prefix form
-
-checkConName :: RdrName -> TcRn ()
-checkConName name = checkErr (isRdrDataCon name) (badDataCon name)
-
-badDataCon :: RdrName -> SDoc
-badDataCon name
-   = hsep [ptext (sLit "Illegal data constructor name"), quotes (ppr name)]
 \end{code}
 
 Note [Infix GADT constructors]
@@ -1385,21 +1424,20 @@ extendRecordFieldEnv tycl_decls inst_decls
 %*********************************************************
 
 \begin{code}
-rnFds :: SDoc -> [Located (FunDep RdrName)] -> RnM [Located (FunDep Name)]
-
-rnFds doc fds
+rnFds :: [Located (FunDep RdrName)] -> RnM [Located (FunDep Name)]
+rnFds fds
   = mapM (wrapLocM rn_fds) fds
   where
     rn_fds (tys1, tys2)
-      = do { tys1' <- rnHsTyVars doc tys1
-           ; tys2' <- rnHsTyVars doc tys2
+      = do { tys1' <- rnHsTyVars tys1
+           ; tys2' <- rnHsTyVars tys2
            ; return (tys1', tys2') }
 
-rnHsTyVars :: SDoc -> [RdrName] -> RnM [Name]
-rnHsTyVars doc tvs  = mapM (rnHsTyVar doc) tvs
+rnHsTyVars :: [RdrName] -> RnM [Name]
+rnHsTyVars tvs  = mapM rnHsTyVar tvs
 
-rnHsTyVar :: SDoc -> RdrName -> RnM Name
-rnHsTyVar _doc tyvar = lookupOccRn tyvar
+rnHsTyVar :: RdrName -> RnM Name
+rnHsTyVar tyvar = lookupOccRn tyvar
 \end{code}
 
 
@@ -1440,15 +1478,11 @@ add gp loc (SpliceD splice@(SpliceDecl _ flag)) ds
        ; return (gp, Just (splice, ds)) }
   where
     badImplicitSplice = ptext (sLit "Parse error: naked expression at top level")
+                     $$ ptext (sLit "Perhaps you intended to use TemplateHaskell")
 
-#ifndef GHCI
-add _ _ (QuasiQuoteD qq) _
-  = pprPanic "Can't do QuasiQuote declarations without GHCi" (ppr qq)
-#else
 add gp _ (QuasiQuoteD qq) ds            -- Expand quasiquotes
   = do { ds' <- runQuasiQuoteDecl qq
        ; addl gp (ds' ++ ds) }
-#endif
 
 -- Class declarations: pull out the fixity signatures to the top
 add gp@(HsGroup {hs_tyclds = ts, hs_fixds = fs}) l (TyClD d) ds

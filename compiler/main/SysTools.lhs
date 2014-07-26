@@ -7,6 +7,8 @@
 -----------------------------------------------------------------------------
 
 \begin{code}
+{-# LANGUAGE CPP, ScopedTypeVariables #-}
+
 module SysTools (
         -- Initialisation
         initSysTools,
@@ -25,6 +27,7 @@ module SysTools (
         readElfSection,
 
         getLinkerInfo,
+        getCompilerInfo,
 
         linkDynLib,
 
@@ -232,6 +235,8 @@ initSysTools mbMinusB
        -- to make that possible, so for now you can't.
        gcc_prog <- getSetting "C compiler command"
        gcc_args_str <- getSetting "C compiler flags"
+       cpp_prog <- getSetting "Haskell CPP command"
+       cpp_args_str <- getSetting "Haskell CPP flags"
        let unreg_gcc_args = if targetUnregisterised
                             then ["-DNO_REGS", "-DUSE_MINIINTERPRETER"]
                             else []
@@ -240,6 +245,7 @@ initSysTools mbMinusB
             | mkTablesNextToCode targetUnregisterised
                = ["-DTABLES_NEXT_TO_CODE"]
             | otherwise = []
+           cpp_args= map Option (words cpp_args_str)
            gcc_args = map Option (words gcc_args_str
                                ++ unreg_gcc_args
                                ++ tntc_gcc_args)
@@ -282,10 +288,7 @@ initSysTools mbMinusB
        -- cpp is derived from gcc on all platforms
        -- HACK, see setPgmP below. We keep 'words' here to remember to fix
        -- Config.hs one day.
-       let cpp_prog  = gcc_prog
-           cpp_args  = Option "-E"
-                     : map Option (words cRAWCPP_FLAGS)
-                    ++ gcc_args
+
 
        -- Other things being equal, as and ld are simply gcc
        gcc_link_args_str <- getSetting "C compiler link flags"
@@ -395,7 +398,7 @@ runPp :: DynFlags -> [Option] -> IO ()
 runPp dflags args =   do
   let prog = pgm_F dflags
       opts = map Option (getOpts dflags opt_F)
-  runSomething dflags "Haskell pre-processor" prog (opts ++ args)
+  runSomething dflags "Haskell pre-processor" prog (args ++ opts)
 
 runCc :: DynFlags -> [Option] -> IO ()
 runCc dflags args =   do
@@ -601,6 +604,42 @@ figureLlvmVersion dflags = do
                 return Nothing)
   return ver
 
+{- Note [Windows stack usage]
+
+See: Trac #8870 (and #8834 for related info)
+
+On Windows, occasionally we need to grow the stack. In order to do
+this, we would normally just bump the stack pointer - but there's a
+catch on Windows.
+
+If the stack pointer is bumped by more than a single page, then the
+pages between the initial pointer and the resulting location must be
+properly committed by the Windows virtual memory subsystem. This is
+only needed in the event we bump by more than one page (i.e 4097 bytes
+or more).
+
+Windows compilers solve this by emitting a call to a special function
+called _chkstk, which does this committing of the pages for you.
+
+The reason this was causing a segfault was because due to the fact the
+new code generator tends to generate larger functions, we needed more
+stack space in GHC itself. In the x86 codegen, we needed approximately
+~12kb of stack space in one go, which caused the process to segfault,
+as the intervening pages were not committed.
+
+In the future, we should do the same thing, to make the problem
+completely go away. In the mean time, we're using a workaround: we
+instruct the linker to specify the generated PE as having an initial
+reserved stack size of 8mb, as well as a initial *committed* stack
+size of 8mb. The default committed size was previously only 4k.
+
+Theoretically it's possible to still hit this problem if you request a
+stack bump of more than 8mb in one go. But the amount of code
+necessary is quite large, and 8mb "should be more than enough for
+anyone" right now (he said, before millions of lines of code cried out
+in terror).
+
+-}
 
 {- Note [Run-time linker info]
 
@@ -638,17 +677,18 @@ neededLinkArgs :: LinkerInfo -> [Option]
 neededLinkArgs (GnuLD o)     = o
 neededLinkArgs (GnuGold o)   = o
 neededLinkArgs (DarwinLD o)  = o
+neededLinkArgs (SolarisLD o) = o
 neededLinkArgs UnknownLD     = []
 
 -- Grab linker info and cache it in DynFlags.
 getLinkerInfo :: DynFlags -> IO LinkerInfo
 getLinkerInfo dflags = do
-  info <- readIORef (rtldFlags dflags)
+  info <- readIORef (rtldInfo dflags)
   case info of
     Just v  -> return v
     Nothing -> do
       v <- getLinkerInfo' dflags
-      writeIORef (rtldFlags dflags) (Just v)
+      writeIORef (rtldInfo dflags) (Just v)
       return v
 
 -- See Note [Run-time linker info].
@@ -676,20 +716,33 @@ getLinkerInfo' dflags = do
   -- Process the executable call
   info <- catchIO (do
              case os of
+               OSSolaris2 ->
+                 -- Solaris uses its own Solaris linker. Even all
+                 -- GNU C are recommended to configure with Solaris
+                 -- linker instead of using GNU binutils linker. Also
+                 -- all GCC distributed with Solaris follows this rule
+                 -- precisely so we assume here, the Solaris linker is
+                 -- used.
+                 return $ SolarisLD []
                OSDarwin ->
                  -- Darwin has neither GNU Gold or GNU LD, but a strange linker
                  -- that doesn't support --version. We can just assume that's
                  -- what we're using.
                  return $ DarwinLD []
-               OSiOS -> 
+               OSiOS ->
                  -- Ditto for iOS
                  return $ DarwinLD []
                OSMinGW32 ->
                  -- GHC doesn't support anything but GNU ld on Windows anyway.
                  -- Process creation is also fairly expensive on win32, so
                  -- we short-circuit here.
-                 return $ GnuLD $ map Option ["-Wl,--hash-size=31",
-                                              "-Wl,--reduce-memory-overheads"]
+                 return $ GnuLD $ map Option
+                   [ -- Reduce ld memory usage
+                     "-Wl,--hash-size=31"
+                   , "-Wl,--reduce-memory-overheads"
+                     -- Increase default stack, see
+                     -- Note [Windows stack usage]
+                   , "-Xlinker", "--stack=0x800000,0x800000" ]
                _ -> do
                  -- In practice, we use the compiler as the linker here. Pass
                  -- -Wl,--version to get linker version info.
@@ -710,6 +763,58 @@ getLinkerInfo' dflags = do
                   text "Make sure you're using GNU ld, GNU gold" <+>
                   text "or the built in OS X linker, etc."
                 return UnknownLD)
+  return info
+
+-- Grab compiler info and cache it in DynFlags.
+getCompilerInfo :: DynFlags -> IO CompilerInfo
+getCompilerInfo dflags = do
+  info <- readIORef (rtccInfo dflags)
+  case info of
+    Just v  -> return v
+    Nothing -> do
+      v <- getCompilerInfo' dflags
+      writeIORef (rtccInfo dflags) (Just v)
+      return v
+
+-- See Note [Run-time linker info].
+getCompilerInfo' :: DynFlags -> IO CompilerInfo
+getCompilerInfo' dflags = do
+  let (pgm,_) = pgm_c dflags
+      -- Try to grab the info from the process output.
+      parseCompilerInfo _stdo stde _exitc
+        -- Regular GCC
+        | any ("gcc version" `isPrefixOf`) stde =
+          return GCC
+        -- Regular clang
+        | any ("clang version" `isPrefixOf`) stde =
+          return Clang
+        -- XCode 5.1 clang
+        | any ("Apple LLVM version 5.1" `isPrefixOf`) stde =
+          return AppleClang51
+        -- XCode 5 clang
+        | any ("Apple LLVM version" `isPrefixOf`) stde =
+          return AppleClang
+        -- XCode 4.1 clang
+        | any ("Apple clang version" `isPrefixOf`) stde =
+          return AppleClang
+         -- Unknown linker.
+        | otherwise = fail "invalid -v output, or compiler is unsupported"
+
+  -- Process the executable call
+  info <- catchIO (do
+                (exitc, stdo, stde) <- readProcessWithExitCode pgm ["-v"] ""
+                -- Split the output by lines to make certain kinds
+                -- of processing easier.
+                parseCompilerInfo (lines stdo) (lines stde) exitc
+            )
+            (\err -> do
+                debugTraceMsg dflags 2
+                    (text "Error (figuring out compiler information):" <+>
+                     text (show err))
+                errorMsg dflags $ hang (text "Warning:") 9 $
+                  text "Couldn't figure out linker information!" $$
+                  text "Make sure you're using GNU gcc, or clang"
+                return UnknownCC)
   return info
 
 runLink :: DynFlags -> [Option] -> IO ()
@@ -910,7 +1015,7 @@ getTempDir dflags = do
             Just dir -> do
                 removeDirectory our_dir
                 return dir
-      `catchIO` \e -> if isAlreadyExistsError e || isDoesNotExistError e
+      `catchIO` \e -> if isAlreadyExistsError e
                       then mkTempDir prefix else ioError e
 
 addFilesToClean :: DynFlags -> [FilePath] -> IO ()
@@ -1211,7 +1316,7 @@ linesPlatform xs =
 
 #endif
 
-linkDynLib :: DynFlags -> [String] -> [PackageId] -> IO ()
+linkDynLib :: DynFlags -> [String] -> [PackageKey] -> IO ()
 linkDynLib dflags0 o_files dep_packages
  = do
     let -- This is a rather ugly hack to fix dynamically linked
@@ -1234,7 +1339,8 @@ linkDynLib dflags0 o_files dep_packages
     let pkg_lib_paths = collectLibraryPaths pkgs
     let pkg_lib_path_opts = concatMap get_pkg_lib_path_opts pkg_lib_paths
         get_pkg_lib_path_opts l
-         | osElfTarget (platformOS (targetPlatform dflags)) &&
+         | ( osElfTarget (platformOS (targetPlatform dflags)) ||
+             osMachOTarget (platformOS (targetPlatform dflags)) ) &&
            dynLibLoader dflags == SystemDependent &&
            not (gopt Opt_Static dflags)
             = ["-L" ++ l, "-Wl,-rpath", "-Wl," ++ l]
@@ -1256,7 +1362,7 @@ linkDynLib dflags0 o_files dep_packages
                       OSMinGW32 ->
                           pkgs
                       _ ->
-                          filter ((/= rtsPackageId) . packageConfigId) pkgs
+                          filter ((/= rtsPackageKey) . packageConfigId) pkgs
     let pkg_link_opts = let (package_hs_libs, extra_libs, other_flags) = collectLinkOpts dflags pkgs_no_rts
                         in  package_hs_libs ++ extra_libs ++ other_flags
 
@@ -1331,9 +1437,7 @@ linkDynLib dflags0 o_files dep_packages
 
             instName <- case dylibInstallName dflags of
                 Just n -> return n
-                Nothing -> do
-                    pwd <- getCurrentDirectory
-                    return $ pwd `combine` output_fn
+                Nothing -> return $ "@rpath" `combine` (takeFileName output_fn)
             runLink dflags (
                     map Option verbFlags
                  ++ [ Option "-dynamiclib"
@@ -1360,7 +1464,7 @@ linkDynLib dflags0 o_files dep_packages
             -------------------------------------------------------------------
 
             let output_fn = case o_file of { Just s -> s; Nothing -> "a.out"; }
-            let buildingRts = thisPackage dflags == rtsPackageId
+            let buildingRts = thisPackage dflags == rtsPackageKey
             let bsymbolicFlag = if buildingRts
                                 then -- -Bsymbolic breaks the way we implement
                                      -- hooks in the RTS

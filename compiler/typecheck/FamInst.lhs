@@ -1,8 +1,8 @@
 The @FamInst@ type: family instance heads
 
 \begin{code}
-{-# LANGUAGE GADTs #-}
-{-# OPTIONS -fno-warn-tabs #-}
+{-# LANGUAGE CPP, GADTs #-}
+{-# OPTIONS_GHC -fno-warn-tabs #-}
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
@@ -13,11 +13,9 @@ module FamInst (
         checkFamInstConsistency, tcExtendLocalFamInstEnv,
 	tcLookupFamInst, 
         tcGetFamInstEnvs,
-        newFamInst,
-        TcBuiltInSynFamily(..), trivialBuiltInFamily
+        newFamInst
     ) where
 
-import Pair(Pair)
 import HscTypes
 import FamInstEnv
 import InstEnv( roughMatchTcs )
@@ -41,7 +39,6 @@ import VarSet
 import Control.Monad
 import Data.Map (Map)
 import qualified Data.Map as Map
-import TcEvidence(TcCoercion)
 
 #include "HsVersions.h"
 \end{code}
@@ -63,7 +60,7 @@ newFamInst :: FamFlavor -> CoAxiom Unbranched -> TcRnIf gbl lcl FamInst
 -- Called from the vectoriser monad too, hence the rather general type
 newFamInst flavor axiom@(CoAxiom { co_ax_branches = FirstBranch branch
                                  , co_ax_tc = fam_tc })
-  = do { (subst, tvs') <- tcInstSkolTyVarsLoc loc tvs
+  = do { (subst, tvs') <- tcInstSigTyVarsLoc loc tvs
        ; return (FamInst { fi_fam      = fam_tc_name
                          , fi_flavor   = flavor
                          , fi_tcs      = roughMatchTcs lhs
@@ -220,9 +217,12 @@ tcLookupFamInst tycon tys
   | otherwise
   = do { instEnv <- tcGetFamInstEnvs
        ; let mb_match = lookupFamInstEnv instEnv tycon tys 
-       ; traceTc "lookupFamInst" ((ppr tycon <+> ppr tys) $$ 
-                                  pprTvBndrs (varSetElems (tyVarsOfTypes tys)) $$ 
-                                  ppr mb_match $$ ppr instEnv)
+       ; traceTc "lookupFamInst" $
+         vcat [ ppr tycon <+> ppr tys
+              , pprTvBndrs (varSetElems (tyVarsOfTypes tys))
+              , ppr mb_match
+              -- , ppr instEnv
+         ]
        ; case mb_match of
 	   [] -> return Nothing
 	   (match:_) 
@@ -247,10 +247,10 @@ tcExtendLocalFamInstEnv fam_insts thing_inside
                                           fam_insts
       ; let env' = env { tcg_fam_insts    = fam_insts'
 		       , tcg_fam_inst_env = inst_env' }
-      ; setGblEnv env' thing_inside 
+      ; setGblEnv env' thing_inside
       }
 
--- Check that the proposed new instance is OK, 
+-- Check that the proposed new instance is OK,
 -- and then add it to the home inst env
 -- This must be lazy in the fam_inst arguments, see Note [Lazy axiom match]
 -- in FamInstEnv.lhs
@@ -261,10 +261,13 @@ addLocalFamInst (home_fie, my_fis) fam_inst
   = do { traceTc "addLocalFamInst" (ppr fam_inst)
 
        ; isGHCi <- getIsGHCi
- 
+       ; mod <- getModule
+       ; traceTc "alfi" (ppr mod $$ ppr isGHCi)
+
            -- In GHCi, we *override* any identical instances
            -- that are also defined in the interactive context
-       ; let (home_fie', my_fis') 
+           -- Trac #7102
+       ; let (home_fie', my_fis')
                | isGHCi    = ( deleteFromFamInstEnv home_fie fam_inst
                              , filterOut (identicalFamInst fam_inst) my_fis)
                | otherwise = (home_fie, my_fis)
@@ -279,9 +282,8 @@ addLocalFamInst (home_fie, my_fis) fam_inst
        ; no_conflict <- checkForConflicts inst_envs fam_inst
        ; if no_conflict then
             return (home_fie'', fam_inst : my_fis')
-         else 
+         else
             return (home_fie,   my_fis) }
-
 \end{code}
 
 %************************************************************************
@@ -298,8 +300,11 @@ checkForConflicts :: FamInstEnvs -> FamInst -> TcM Bool
 checkForConflicts inst_envs fam_inst
   = do { let conflicts = lookupFamInstEnvConflicts inst_envs fam_inst
              no_conflicts = null conflicts
-       ; traceTc "checkForConflicts" (ppr (map fim_instance conflicts) $$
-                                      ppr fam_inst $$ ppr inst_envs)
+       ; traceTc "checkForConflicts" $
+         vcat [ ppr (map fim_instance conflicts)
+              , ppr fam_inst
+              -- , ppr inst_envs
+         ]
        ; unless no_conflicts $ conflictInstErr fam_inst conflicts
        ; return no_conflicts }
 
@@ -334,26 +339,4 @@ tcGetFamInstEnvs
   = do { eps <- getEps; env <- getGblEnv
        ; return (eps_fam_inst_env eps, tcg_fam_inst_env env) }
 \end{code}
-
-
-Type checking of built-in families
-==================================
-
-\begin{code}
-data TcBuiltInSynFamily = TcBuiltInSynFamily
-  { sfMatchFam      :: [Type] -> Maybe (TcCoercion, TcType)
-  , sfInteractTop   :: [Type] -> Type -> [Pair TcType]
-  , sfInteractInert :: [Type] -> Type ->
-                       [Type] -> Type -> [Pair TcType]
-  }
-
--- Provides default implementations that do nothing.
-trivialBuiltInFamily :: TcBuiltInSynFamily
-trivialBuiltInFamily = TcBuiltInSynFamily
-  { sfMatchFam      = \_ -> Nothing
-  , sfInteractTop   = \_ _ -> []
-  , sfInteractInert = \_ _ _ _ -> []
-  }
-\end{code}
-
 

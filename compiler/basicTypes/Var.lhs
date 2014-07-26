@@ -5,7 +5,8 @@
 \section{@Vars@: Variables}
 
 \begin{code}
-{-# OPTIONS -fno-warn-tabs #-}
+{-# LANGUAGE CPP, DeriveDataTypeable #-}
+{-# OPTIONS_GHC -fno-warn-tabs #-}
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
@@ -73,7 +74,6 @@ module Var (
     ) where
 
 #include "HsVersions.h"
-#include "Typeable.h"
 
 import {-# SOURCE #-}	TypeRep( Type, Kind, SuperKind )
 import {-# SOURCE #-}	TcType( TcTyVarDetails, pprTcTyVarDetails )

@@ -77,7 +77,7 @@
    ------------------------------------------------------------------------- */
 
 typedef struct gen_workspace_ {
-    generation * gen;		// the gen for this workspace 
+    generation * gen;           // the gen for this workspace
     struct gc_thread_ * my_gct; // the gc_thread that contains this workspace
 
     // where objects to be scavenged go
@@ -122,7 +122,7 @@ typedef struct gc_thread_ {
     OSThreadId id;                 // The OS thread that this struct belongs to
     SpinLock   gc_spin;
     SpinLock   mut_spin;
-    volatile StgWord wakeup;
+    volatile StgWord wakeup;       // NB not StgWord8; only StgWord is guaranteed atomic
 #endif
     nat thread_index;              // a zero based index identifying the thread
     rtsBool idle;                  // sitting out of this GC cycle
@@ -184,7 +184,6 @@ typedef struct gc_thread_ {
 
     Time gc_start_cpu;   // process CPU time
     Time gc_start_elapsed;  // process elapsed time
-    Time gc_start_thread_cpu; // thread CPU time
     W_ gc_start_faults;
 
     // -------------------

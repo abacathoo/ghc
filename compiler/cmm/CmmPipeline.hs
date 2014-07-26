@@ -1,6 +1,4 @@
-{-# LANGUAGE NoMonoLocalBinds #-}
--- Norman likes local bindings
--- If this module lives on I'd like to get rid of this extension in due course
+{-# LANGUAGE BangPatterns #-}
 
 module CmmPipeline (
   -- | Converts C-- with an implicit stack and native C-- calls into
@@ -40,8 +38,6 @@ cmmPipeline  :: HscEnv -- Compilation env including
 cmmPipeline hsc_env topSRT prog =
   do let dflags = hsc_dflags hsc_env
 
-     showPass dflags "CPSZ"
-
      tops <- {-# SCC "tops" #-} mapM (cpsTop hsc_env) prog
 
      (topSRT, cmms) <- {-# SCC "doSRTs" #-} doSRTs dflags topSRT tops
@@ -79,14 +75,14 @@ cpsTop hsc_env proc =
        let call_pps = {-# SCC "callProcPoints" #-} callProcPoints g
        proc_points <-
           if splitting_proc_points
-             then {-# SCC "minimalProcPointSet" #-} runUniqSM $
+             then do
+               pp <- {-# SCC "minimalProcPointSet" #-} runUniqSM $
                   minimalProcPointSet (targetPlatform dflags) call_pps g
+               dumpIfSet_dyn dflags Opt_D_dump_cmm "Proc points"
+                     (ppr l $$ ppr pp $$ ppr g)
+               return pp
              else
-                  return call_pps
-
-       let noncall_pps = proc_points `setDifference` call_pps
-       when (not (setNull noncall_pps) && dopt Opt_D_dump_cmm dflags) $
-         pprTrace "Non-call proc points: " (ppr noncall_pps) $ return ()
+               return call_pps
 
        ----------- Layout the stack and manifest Sp ----------------------------
        (g, stackmaps) <-
@@ -105,57 +101,40 @@ cpsTop hsc_env proc =
        let cafEnv = {-# SCC "cafAnal" #-} cafAnal g
        dumpIfSet_dyn dflags Opt_D_dump_cmm "CAFEnv" (ppr cafEnv)
 
-       if splitting_proc_points
-          then do
-            ------------- Split into separate procedures -----------------------
-            pp_map  <- {-# SCC "procPointAnalysis" #-} runUniqSM $
-                             procPointAnalysis proc_points g
-            dumpWith dflags Opt_D_dump_cmm_procmap "procpoint map" pp_map
-            gs <- {-# SCC "splitAtProcPoints" #-} runUniqSM $
-                  splitAtProcPoints dflags l call_pps proc_points pp_map
-                                    (CmmProc h l v g)
-            dumps Opt_D_dump_cmm_split "Post splitting" gs
+       g <- if splitting_proc_points
+            then do
+               ------------- Split into separate procedures -----------------------
+               pp_map  <- {-# SCC "procPointAnalysis" #-} runUniqSM $
+                          procPointAnalysis proc_points g
+               dumpWith dflags Opt_D_dump_cmm_procmap "procpoint map" pp_map
+               g <- {-# SCC "splitAtProcPoints" #-} runUniqSM $
+                    splitAtProcPoints dflags l call_pps proc_points pp_map
+                                      (CmmProc h l v g)
+               dumps Opt_D_dump_cmm_split "Post splitting" g
+               return g
+             else do
+               -- attach info tables to return points
+               return $ [attachContInfoTables call_pps (CmmProc h l v g)]
 
-            ------------- Populate info tables with stack info -----------------
-            gs <- {-# SCC "setInfoTableStackMap" #-}
-                  return $ map (setInfoTableStackMap dflags stackmaps) gs
-            dumps Opt_D_dump_cmm_info "after setInfoTableStackMap" gs
+       ------------- Populate info tables with stack info -----------------
+       g <- {-# SCC "setInfoTableStackMap" #-}
+            return $ map (setInfoTableStackMap dflags stackmaps) g
+       dumps Opt_D_dump_cmm_info "after setInfoTableStackMap" g
 
-            ----------- Control-flow optimisations -----------------------------
-            gs <- {-# SCC "cmmCfgOpts(2)" #-}
-                  return $ if optLevel dflags >= 1
-                             then map (cmmCfgOptsProc splitting_proc_points) gs
-                             else gs
-            gs <- return (map removeUnreachableBlocksProc gs)
-                -- Note [unreachable blocks]
-            dumps Opt_D_dump_cmm_cfg "Post control-flow optimisations" gs
+       ----------- Control-flow optimisations -----------------------------
+       g <- {-# SCC "cmmCfgOpts(2)" #-}
+            return $ if optLevel dflags >= 1
+                     then map (cmmCfgOptsProc splitting_proc_points) g
+                     else g
+       g <- return (map removeUnreachableBlocksProc g)
+            -- See Note [unreachable blocks]
+       dumps Opt_D_dump_cmm_cfg "Post control-flow optimisations" g
 
-            return (cafEnv, gs)
-
-          else do
-            -- attach info tables to return points
-            g <- return $ attachContInfoTables call_pps (CmmProc h l v g)
-
-            ------------- Populate info tables with stack info -----------------
-            g <- {-# SCC "setInfoTableStackMap" #-}
-                  return $ setInfoTableStackMap dflags stackmaps g
-            dump' Opt_D_dump_cmm_info "after setInfoTableStackMap" g
-
-            ----------- Control-flow optimisations -----------------------------
-            g <- {-# SCC "cmmCfgOpts(2)" #-}
-                 return $ if optLevel dflags >= 1
-                             then cmmCfgOptsProc splitting_proc_points g
-                             else g
-            g <- return (removeUnreachableBlocksProc g)
-                -- Note [unreachable blocks]
-            dump' Opt_D_dump_cmm_cfg "Post control-flow optimisations" g
-
-            return (cafEnv, [g])
+       return (cafEnv, g)
 
   where dflags = hsc_dflags hsc_env
         platform = targetPlatform dflags
         dump = dumpGraph dflags
-        dump' = dumpWith dflags
 
         dumps flag name
            = mapM_ (dumpWith dflags flag name)
@@ -379,4 +358,3 @@ dumpWith dflags flag txt g = do
    dumpIfSet_dyn dflags flag txt (ppr g)
    when (not (dopt flag dflags)) $
       dumpIfSet_dyn dflags Opt_D_dump_cmm txt (ppr g)
-

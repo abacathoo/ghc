@@ -1,0 +1,24 @@
+TYPE SIGNATURES
+TYPE CONSTRUCTORS
+  class C1 a where
+    meth1 :: a -> a
+  class C2 a b where
+    meth2 :: a ~ b => a -> b
+  class C3 a b where
+    type family F3 b :: * open
+    meth3 :: a -> F3 b -> F3 b
+  class C4 a b where
+    meth4 :: a -> F4 b -> F4 b
+  type family F4 a :: * open
+  type Syn1 a = F4 a
+  type Syn2 a = [a]
+COERCION AXIOMS
+  axiom Roles3.NTCo:C1 :: C1 a = a -> a
+  axiom Roles3.NTCo:C2 :: C2 a b = a ~ b => a -> b
+  axiom Roles3.NTCo:C3 :: C3 a b = a -> F3 b -> F3 b
+  axiom Roles3.NTCo:C4 :: C4 a b = a -> F4 b -> F4 b
+Dependent modules: []
+Dependent packages: [base, ghc-prim, integer-gmp]
+
+==================== Typechecker ====================
+

@@ -4,14 +4,13 @@
 \section[CoreMonad]{The core pipeline monad}
 
 \begin{code}
-{-# OPTIONS -fno-warn-tabs #-}
+{-# LANGUAGE CPP, UndecidableInstances #-}
+{-# OPTIONS_GHC -fno-warn-tabs #-}
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
 --     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
-
-{-# LANGUAGE UndecidableInstances #-}
 
 module CoreMonad (
     -- * Configuration of the core-to-core passes
@@ -34,7 +33,7 @@ module CoreMonad (
     
     -- ** Reading from the monad
     getHscEnv, getRuleBase, getModule,
-    getDynFlags, getOrigNameCache,
+    getDynFlags, getOrigNameCache, getPackageFamInstEnv,
     
     -- ** Writing to the monad
     addSimplCount,
@@ -84,6 +83,9 @@ import IOEnv hiding     ( liftIO, failM, failWithM )
 import qualified IOEnv  ( liftIO )
 import TcEnv            ( tcLookupGlobal )
 import TcRnMonad        ( initTcForLookup )
+import InstEnv          ( instanceDFunId )
+import Type             ( tyVarsOfType )
+import Id               ( idType )
 import Var
 import VarSet
 
@@ -254,7 +256,7 @@ lintInteractiveExpr what hsc_env expr
 interactiveInScope :: HscEnv -> [Var]
 -- In GHCi we may lint expressions, or bindings arising from 'deriving'
 -- clauses, that mention variables bound in the interactive context.
--- These are Local things (see Note [Interactively-bound Ids in GHCi] in TcRnDriver).
+-- These are Local things (see Note [Interactively-bound Ids in GHCi] in HscTypes).
 -- So we have to tell Lint about them, lest it reports them as out of scope.
 -- 
 -- We do this by find local-named things that may appear free in interactive
@@ -264,14 +266,17 @@ interactiveInScope :: HscEnv -> [Var]
 -- 
 -- See Trac #8215 for an example
 interactiveInScope hsc_env 
-  = tyvars ++ vars
+  = varSetElems tyvars ++ ids
   where
-    ictxt  = hsc_IC hsc_env
-    te     = mkTypeEnvWithImplicits (ic_tythings ictxt ++ map AnId (ic_sys_vars ictxt))
-    vars   = typeEnvIds te
-    tyvars = varSetElems $ tyThingsTyVars $ typeEnvElts $ te
+    -- C.f. TcRnDriver.setInteractiveContext, Desugar.deSugarExpr
+    ictxt                   = hsc_IC hsc_env
+    (cls_insts, _fam_insts) = ic_instances ictxt
+    te1    = mkTypeEnvWithImplicits (ic_tythings ictxt)
+    te     = extendTypeEnvWithIds te1 (map instanceDFunId cls_insts)
+    ids    = typeEnvIds te
+    tyvars = foldr (unionVarSet . tyVarsOfType . idType) emptyVarSet ids
               -- Why the type variables?  How can the top level envt have free tyvars?
-              -- I think it's becuase of the GHCi debugger, which can bind variables
+              -- I think it's because of the GHCi debugger, which can bind variables
               --   f :: [t] -> [t]
               -- where t is a RuntimeUnk (see TcType)
 \end{code}
@@ -299,6 +304,7 @@ data CoreToDo           -- These are diff core-to-core passes,
   | CoreLiberateCase
   | CoreDoPrintCore
   | CoreDoStaticArgs
+  | CoreDoCallArity
   | CoreDoStrictness
   | CoreDoWorkerWrapper
   | CoreDoSpecialising
@@ -327,6 +333,7 @@ coreDumpFlag CoreDoFloatInwards       = Just Opt_D_verbose_core2core
 coreDumpFlag (CoreDoFloatOutwards {}) = Just Opt_D_verbose_core2core
 coreDumpFlag CoreLiberateCase         = Just Opt_D_verbose_core2core
 coreDumpFlag CoreDoStaticArgs 	      = Just Opt_D_verbose_core2core
+coreDumpFlag CoreDoCallArity 	      = Just Opt_D_dump_call_arity
 coreDumpFlag CoreDoStrictness 	      = Just Opt_D_dump_stranal
 coreDumpFlag CoreDoWorkerWrapper      = Just Opt_D_dump_worker_wrapper
 coreDumpFlag CoreDoSpecialising       = Just Opt_D_dump_spec
@@ -350,6 +357,7 @@ instance Outputable CoreToDo where
   ppr (CoreDoFloatOutwards f)  = ptext (sLit "Float out") <> parens (ppr f)
   ppr CoreLiberateCase         = ptext (sLit "Liberate case")
   ppr CoreDoStaticArgs 	       = ptext (sLit "Static argument")
+  ppr CoreDoCallArity	       = ptext (sLit "Called arity analysis")
   ppr CoreDoStrictness 	       = ptext (sLit "Demand analysis")
   ppr CoreDoWorkerWrapper      = ptext (sLit "Worker Wrapper binds")
   ppr CoreDoSpecialising       = ptext (sLit "Specialise")
@@ -777,11 +785,10 @@ data CoreReader = CoreReader {
         cr_hsc_env :: HscEnv,
         cr_rule_base :: RuleBase,
         cr_module :: Module,
-        cr_globals :: ((Bool, [String]),
 #ifdef GHCI
-                       (MVar PersistentLinkerState, Bool))
+        cr_globals :: (MVar PersistentLinkerState, Bool)
 #else
-                       ())
+        cr_globals :: ()
 #endif
 }
 
@@ -854,7 +861,7 @@ runCoreM :: HscEnv
          -> CoreM a
          -> IO (a, SimplCount)
 runCoreM hsc_env rule_base us mod m = do
-        glbls <- liftM2 (,) saveStaticFlagGlobals saveLinkerGlobals
+        glbls <- saveLinkerGlobals
         liftM extract $ runIOEnv (reader glbls) $ unCoreM m state
   where
     reader glbls = CoreReader {
@@ -948,6 +955,12 @@ getOrigNameCache :: CoreM OrigNameCache
 getOrigNameCache = do
     nameCacheRef <- fmap hsc_NC getHscEnv
     liftIO $ fmap nsNames $ readIORef nameCacheRef
+
+getPackageFamInstEnv :: CoreM PackageFamInstEnv
+getPackageFamInstEnv = do
+    hsc_env <- getHscEnv
+    eps <- liftIO $ hscEPS hsc_env
+    return $ eps_fam_inst_env eps
 \end{code}
 
 %************************************************************************
@@ -997,10 +1010,9 @@ argument to the plugin function so that we can turn this function into
 \begin{code}
 reinitializeGlobals :: CoreM ()
 reinitializeGlobals = do
-    (sf_globals, linker_globals) <- read cr_globals
+    linker_globals <- read cr_globals
     hsc_env <- getHscEnv
     let dflags = hsc_dflags hsc_env
-    liftIO $ restoreStaticFlagGlobals sf_globals
     liftIO $ restoreLinkerGlobals linker_globals
     liftIO $ setUnsafeGlobalDynFlags dflags
 \end{code}

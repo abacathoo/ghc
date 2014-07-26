@@ -4,7 +4,7 @@
 
 \begin{code}
 
-{-# LANGUAGE GADTs, ScopedTypeVariables #-}
+{-# LANGUAGE CPP, DeriveDataTypeable, GADTs, ScopedTypeVariables #-}
 
 -- | Module for coercion axioms, used to represent type family instances
 -- and newtypes
@@ -28,7 +28,8 @@ module CoAxiom (
 
        Role(..), fsFromRole,
 
-       CoAxiomRule(..), Eqn
+       CoAxiomRule(..), Eqn,
+       BuiltInSynFamily(..), trivialBuiltInFamily
        ) where 
 
 import {-# SOURCE #-} TypeRep ( Type )
@@ -326,6 +327,7 @@ isImplicitCoAxiom = co_ax_implicit
 coAxBranchIncomps :: CoAxBranch -> [CoAxBranch]
 coAxBranchIncomps = cab_incomps
 
+-- See Note [Compatibility checking] in FamInstEnv
 placeHolderIncomps :: [CoAxBranch]
 placeHolderIncomps = panic "placeHolderIncomps"
 
@@ -520,5 +522,23 @@ instance Ord CoAxiomRule where
 
 instance Outputable CoAxiomRule where
   ppr = ppr . coaxrName
+
+
+-- Type checking of built-in families
+data BuiltInSynFamily = BuiltInSynFamily
+  { sfMatchFam      :: [Type] -> Maybe (CoAxiomRule, [Type], Type)
+  , sfInteractTop   :: [Type] -> Type -> [Eqn]
+  , sfInteractInert :: [Type] -> Type ->
+                       [Type] -> Type -> [Eqn]
+  }
+
+-- Provides default implementations that do nothing.
+trivialBuiltInFamily :: BuiltInSynFamily
+trivialBuiltInFamily = BuiltInSynFamily
+  { sfMatchFam      = \_ -> Nothing
+  , sfInteractTop   = \_ _ -> []
+  , sfInteractInert = \_ _ _ _ -> []
+  }
+
 \end{code}
 

@@ -1,4 +1,4 @@
-%
+o%
 % (c) The University of Glasgow 2006
 % (c) The GRASP/AQUA Project, Glasgow University, 1992-1998
 %
@@ -9,7 +9,8 @@ This module contains monadic operations over types that contain
 mutable type variables
 
 \begin{code}
-{-# OPTIONS -fno-warn-tabs #-}
+{-# LANGUAGE CPP #-}
+{-# OPTIONS_GHC -fno-warn-tabs #-}
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
@@ -36,27 +37,27 @@ module TcMType (
   newEvVar, newEvVars, newEq, newDict,
   newWantedEvVar, newWantedEvVars,
   newTcEvBinds, addTcEvBind,
-  newFlatWanteds,
+  newFlatWanted, newFlatWanteds,
 
   --------------------------------
   -- Instantiation
-  tcInstTyVars, tcInstSigTyVars, newSigTyVar,
-  tcInstType, 
-  tcInstSkolTyVars, tcInstSkolTyVarsLoc, tcInstSuperSkolTyVars,
-  tcInstSkolTyVarsX, tcInstSuperSkolTyVarsX,
+  tcInstTyVars, newSigTyVar,
+  tcInstType,
+  tcInstSkolTyVars, tcInstSuperSkolTyVars,tcInstSuperSkolTyVarsX,
+  tcInstSigTyVarsLoc, tcInstSigTyVars,
   tcInstSkolTyVar, tcInstSkolType,
   tcSkolDFunType, tcSuperSkolTyVars,
 
   --------------------------------
   -- Zonking
   zonkTcPredType, 
-  skolemiseSigTv, skolemiseUnboundMetaTyVar,
+  skolemiseUnboundMetaTyVar,
   zonkTcTyVar, zonkTcTyVars, zonkTyVarsAndFV, zonkTcTypeAndFV,
   zonkQuantifiedTyVar, quantifyTyVars,
   zonkTcTyVarBndr, zonkTcType, zonkTcTypes, zonkTcThetaType, 
 
   zonkTcKind, defaultKindVarToStar,
-  zonkEvVar, zonkWC, zonkId, zonkCt, zonkCts, zonkSkolemInfo,
+  zonkEvVar, zonkWC, zonkFlats, zonkId, zonkCt, zonkCts, zonkSkolemInfo,
 
   tcGetGlobalTyVars, 
   ) where
@@ -163,16 +164,17 @@ predTypeOccName ty = case classifyPredType ty of
 *********************************************************************************
 
 \begin{code}
+newFlatWanted :: CtOrigin -> PredType -> TcM Ct
+newFlatWanted orig pty
+  = do loc <- getCtLoc orig
+       v <- newWantedEvVar pty
+       return $ mkNonCanonical $
+            CtWanted { ctev_evar = v
+                     , ctev_pred = pty
+                     , ctev_loc = loc }
+
 newFlatWanteds :: CtOrigin -> ThetaType -> TcM [Ct]
-newFlatWanteds orig theta
-  = do { loc <- getCtLoc orig
-       ; mapM (inst_to_wanted loc) theta }
-  where 
-    inst_to_wanted loc pty 
-          = do { v <- newWantedEvVar pty 
-               ; return $ mkNonCanonical loc $
-                 CtWanted { ctev_evar = v
-                          , ctev_pred = pty } }
+newFlatWanteds orig = mapM (newFlatWanted orig)
 \end{code}
 
 %************************************************************************
@@ -237,9 +239,6 @@ tcInstSkolTyVar loc overlappable subst tyvar
 
 -- Wrappers
 -- we need to be able to do this from outside the TcM monad:
-tcInstSkolTyVarsLoc :: SrcSpan -> [TyVar] -> TcRnIf gbl lcl (TvSubst, [TcTyVar])
-tcInstSkolTyVarsLoc loc = mapAccumLM (tcInstSkolTyVar loc False) (mkTopTvSubst [])
-
 tcInstSkolTyVars :: [TyVar] -> TcM (TvSubst, [TcTyVar])
 tcInstSkolTyVars = tcInstSkolTyVarsX (mkTopTvSubst [])
 
@@ -254,28 +253,25 @@ tcInstSuperSkolTyVarsX subst = tcInstSkolTyVars' True  subst
 tcInstSkolTyVars' :: Bool -> TvSubst -> [TyVar] -> TcM (TvSubst, [TcTyVar])
 -- Precondition: tyvars should be ordered (kind vars first)
 -- see Note [Kind substitution when instantiating]
+-- Get the location from the monad; this is a complete freshening operation
 tcInstSkolTyVars' isSuperSkol subst tvs
   = do { loc <- getSrcSpanM
        ; mapAccumLM (tcInstSkolTyVar loc isSuperSkol) subst tvs }
+
+tcInstSigTyVarsLoc :: SrcSpan -> [TyVar] -> TcRnIf gbl lcl (TvSubst, [TcTyVar])
+-- We specify the location
+tcInstSigTyVarsLoc loc = mapAccumLM (tcInstSkolTyVar loc False) (mkTopTvSubst [])
+
+tcInstSigTyVars :: [TyVar] -> TcRnIf gbl lcl (TvSubst, [TcTyVar])
+-- Get the location from the TyVar itself, not the monad
+tcInstSigTyVars = mapAccumLM inst_tv (mkTopTvSubst [])
+  where
+    inst_tv subst tv = tcInstSkolTyVar (getSrcSpan tv) False subst tv
 
 tcInstSkolType :: TcType -> TcM ([TcTyVar], TcThetaType, TcType)
 -- Instantiate a type with fresh skolem constants
 -- Binding location comes from the monad
 tcInstSkolType ty = tcInstType tcInstSkolTyVars ty
-
-tcInstSigTyVars :: [TyVar] -> TcM (TvSubst, [TcTyVar])
--- Make meta SigTv type variables for patten-bound scoped type varaibles
--- We use SigTvs for them, so that they can't unify with arbitrary types
--- Precondition: tyvars should be ordered (kind vars first)
--- see Note [Kind substitution when instantiating]
-tcInstSigTyVars = mapAccumLM tcInstSigTyVar (mkTopTvSubst [])
-	-- The tyvars are freshly made, by tcInstSigTyVar
-        -- So mkTopTvSubst [] is ok
-
-tcInstSigTyVar :: TvSubst -> TyVar -> TcM (TvSubst, TcTyVar)
-tcInstSigTyVar subst tv
-  = do { new_tv <- newSigTyVar (tyVarName tv) (substTy subst (tyVarKind tv))
-       ; return (extendTvSubst subst tv (mkTyVarTy new_tv), new_tv) }
 
 newSigTyVar :: Name -> Kind -> TcM TcTyVar
 newSigTyVar name kind
@@ -390,34 +386,34 @@ writeMetaTyVar tyvar ty
 
 --------------------
 writeMetaTyVarRef :: TcTyVar -> TcRef MetaDetails -> TcType -> TcM ()
--- Here the tyvar is for error checking only; 
+-- Here the tyvar is for error checking only;
 -- the ref cell must be for the same tyvar
 writeMetaTyVarRef tyvar ref ty
-  | not debugIsOn 
+  | not debugIsOn
   = do { traceTc "writeMetaTyVar" (ppr tyvar <+> text ":=" <+> ppr ty)
        ; writeMutVar ref (Indirect ty) }
 
 -- Everything from here on only happens if DEBUG is on
   | otherwise
-  = do { meta_details <- readMutVar ref; 
+  = do { meta_details <- readMutVar ref;
        -- Zonk kinds to allow the error check to work
-       ; zonked_tv_kind <- zonkTcKind tv_kind 
+       ; zonked_tv_kind <- zonkTcKind tv_kind
        ; zonked_ty_kind <- zonkTcKind ty_kind
 
        -- Check for double updates
-       ; ASSERT2( isFlexi meta_details, 
+       ; ASSERT2( isFlexi meta_details,
                   hang (text "Double update of meta tyvar")
                    2 (ppr tyvar $$ ppr meta_details) )
 
          traceTc "writeMetaTyVar" (ppr tyvar <+> text ":=" <+> ppr ty)
-       ; writeMutVar ref (Indirect ty) 
-       ; when (   not (isPredTy tv_kind) 
+       ; writeMutVar ref (Indirect ty)
+       ; when (   not (isPredTy tv_kind)
                     -- Don't check kinds for updates to coercion variables
                && not (zonked_ty_kind `tcIsSubKind` zonked_tv_kind))
        $ WARN( True, hang (text "Ill-kinded update to meta tyvar")
-                        2 (    ppr tyvar <+> text "::" <+> ppr tv_kind 
-                           <+> text ":=" 
-                           <+> ppr ty    <+> text "::" <+> ppr ty_kind) )
+                        2 (    ppr tyvar <+> text "::" <+> (ppr tv_kind $$ ppr zonked_tv_kind)
+                           <+> text ":="
+                           <+> ppr ty    <+> text "::" <+> (ppr ty_kind $$ ppr zonked_ty_kind) ) )
          (return ()) }
   where
     tv_kind = tyVarKind tyvar
@@ -545,7 +541,7 @@ zonkQuantifiedTyVar :: TcTyVar -> TcM TcTyVar
 -- default their kind (e.g. from OpenTypeKind to TypeKind)
 -- 			-- see notes with Kind.defaultKind
 -- The meta tyvar is updated to point to the new skolem TyVar.  Now any 
--- bound occurences of the original type variable will get zonked to 
+-- bound occurrences of the original type variable will get zonked to 
 -- the immutable version.
 --
 -- We leave skolem TyVars alone; they are immutable.
@@ -597,17 +593,6 @@ skolemiseUnboundMetaTyVar tv details
 
         ; writeMetaTyVar tv (mkTyVarTy final_tv)
         ; return final_tv }
-
-skolemiseSigTv :: TcTyVar -> TcM TcTyVar
--- In TcBinds we create SigTvs for type signatures
--- but for singleton groups we want them to really be skolems
--- which do not unify with each other
-skolemiseSigTv tv  
-  = ASSERT2( isSigTyVar tv, ppr tv )
-    do { writeMetaTyVarRef tv (metaTvRef tv) (mkTyVarTy skol_tv)
-       ; return skol_tv }
-  where
-    skol_tv = setTcTyVarDetails tv (SkolemTv False)
 \end{code}
 
 Note [Zonking to Skolem]
@@ -808,7 +793,7 @@ zonkFlats binds_var untch cts
       , not (tv `elemVarSet` tyVarsOfType ty_lhs)   -- Do not construct an infinite type
       = ASSERT2( case tcSplitTyConApp_maybe ty_lhs of { Just (tc,_) -> isSynFamilyTyCon tc; _ -> False }, ppr orig_ct )
         do { writeMetaTyVar tv ty_lhs
-           ; let evterm = EvCoercion (mkTcReflCo ty_lhs)
+           ; let evterm = EvCoercion (mkTcNomReflCo ty_lhs)
                  evvar  = ctev_evar (cc_ev zct)
            ; when (isWantedCt orig_ct) $         -- Can be derived (Trac #8129)
              addTcEvBind binds_var evvar evterm
@@ -874,8 +859,7 @@ zonkCt ct@(CHoleCan { cc_ev = ev })
        ; return $ ct { cc_ev = ev' } }
 zonkCt ct
   = do { fl' <- zonkCtEvidence (cc_ev ct)
-       ; return (CNonCanonical { cc_ev = fl'
-                               , cc_loc = cc_loc ct }) }
+       ; return (mkNonCanonical fl') }
 
 zonkCtEvidence :: CtEvidence -> TcM CtEvidence
 zonkCtEvidence ctev@(CtGiven { ctev_pred = pred }) 

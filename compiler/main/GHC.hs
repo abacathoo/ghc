@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP, NondecreasingIndentation, ScopedTypeVariables #-}
+
 -- -----------------------------------------------------------------------------
 --
 -- (c) The University of Glasgow, 2005-2012
@@ -53,7 +55,6 @@ module GHC (
         -- ** Compiling to Core
         CoreModule(..),
         compileToCoreModule, compileToCoreSimplified,
-        compileCoreToObj,
 
         -- * Inspecting the module structure of the program
         ModuleGraph, ModSummary(..), ms_mod_name, ModLocation(..),
@@ -102,6 +103,7 @@ module GHC (
         parseName,
         RunResult(..),  
         runStmt, runStmtWithLocation, runDecls, runDeclsWithLocation,
+        runTcInteractive,   -- Desired by some clients (Trac #8878)
         parseImportDecl, SingleStep(..),
         resume,
         Resume(resumeStmt, resumeThreadId, resumeBreakInfo, resumeSpan,
@@ -131,10 +133,10 @@ module GHC (
         -- * Abstract syntax elements
 
         -- ** Packages
-        PackageId,
+        PackageKey,
 
         -- ** Modules
-        Module, mkModule, pprModule, moduleName, modulePackageId,
+        Module, mkModule, pprModule, moduleName, modulePackageKey,
         ModuleName, mkModuleName, moduleNameString,
 
         -- ** Names
@@ -257,8 +259,10 @@ module GHC (
 import ByteCodeInstr
 import BreakArray
 import InteractiveEval
+import TcRnDriver       ( runTcInteractive )
 #endif
 
+import PprTyThing       ( pprFamInst )
 import HscMain
 import GhcMake
 import DriverPipeline   ( compileOne' )
@@ -281,7 +285,7 @@ import DataCon
 import Name             hiding ( varName )
 import Avail
 import InstEnv
-import FamInstEnv
+import FamInstEnv ( FamInst )
 import SrcLoc
 import CoreSyn
 import TidyPgm
@@ -295,6 +299,7 @@ import Annotations
 import Module
 import UniqFM
 import Panic
+import Platform
 import Bag              ( unitBag )
 import ErrUtils
 import MonadUtils
@@ -307,7 +312,7 @@ import FastString
 import qualified Parser
 import Lexer
 
-import System.Directory ( doesFileExist, getCurrentDirectory )
+import System.Directory ( doesFileExist )
 import Data.Maybe
 import Data.List        ( find )
 import Data.Time
@@ -344,7 +349,10 @@ defaultErrorHandler fm (FlushOut flushOut) inner =
                 Just (ioe :: IOException) ->
                   fatalErrorMsg'' fm (show ioe)
                 _ -> case fromException exception of
-                     Just UserInterrupt -> exitWith (ExitFailure 1)
+                     Just UserInterrupt ->
+                         -- Important to let this one propagate out so our
+                         -- calling process knows we were interrupted by ^C
+                         liftIO $ throwIO UserInterrupt
                      Just StackOverflow ->
                          fatalErrorMsg'' fm "stack overflow: use +RTS -K<size> to increase it"
                      _ -> case fromException exception of
@@ -438,19 +446,53 @@ runGhcT mb_top_dir ghct = do
 -- reside.  More precisely, this should be the output of @ghc --print-libdir@
 -- of the version of GHC the module using this API is compiled with.  For
 -- portability, you should use the @ghc-paths@ package, available at
--- <http://hackage.haskell.org/cgi-bin/hackage-scripts/package/ghc-paths>.
+-- <http://hackage.haskell.org/package/ghc-paths>.
 
 initGhcMonad :: GhcMonad m => Maybe FilePath -> m ()
-initGhcMonad mb_top_dir = do
-  -- catch ^C
-  liftIO $ installSignalHandlers
+initGhcMonad mb_top_dir
+  = do { env <- liftIO $
+                do { installSignalHandlers  -- catch ^C
+                   ; initStaticOpts
+                   ; mySettings <- initSysTools mb_top_dir
+                   ; dflags <- initDynFlags (defaultDynFlags mySettings)
+                   ; checkBrokenTablesNextToCode dflags
+                   ; setUnsafeGlobalDynFlags dflags
+                      -- c.f. DynFlags.parseDynamicFlagsFull, which
+                      -- creates DynFlags and sets the UnsafeGlobalDynFlags
+                   ; newHscEnv dflags }
+       ; setSession env }
 
-  liftIO $ initStaticOpts
+-- | The binutils linker on ARM emits unnecessary R_ARM_COPY relocations which
+-- breaks tables-next-to-code in dynamically linked modules. This
+-- check should be more selective but there is currently no released
+-- version where this bug is fixed.
+-- See https://sourceware.org/bugzilla/show_bug.cgi?id=16177 and
+-- https://ghc.haskell.org/trac/ghc/ticket/4210#comment:29
+checkBrokenTablesNextToCode :: MonadIO m => DynFlags -> m ()
+checkBrokenTablesNextToCode dflags
+  = do { broken <- checkBrokenTablesNextToCode' dflags
+       ; when broken
+         $ do { _ <- liftIO $ throwIO $ mkApiErr dflags invalidLdErr
+              ; fail "unsupported linker"
+              }
+       }
+  where
+    invalidLdErr = text "Tables-next-to-code not supported on ARM" <+>
+                   text "when using binutils ld (please see:" <+>
+                   text "https://sourceware.org/bugzilla/show_bug.cgi?id=16177)"
 
-  mySettings <- liftIO $ initSysTools mb_top_dir
-  dflags <- liftIO $ initDynFlags (defaultDynFlags mySettings)
-  env <- liftIO $ newHscEnv dflags
-  setSession env
+checkBrokenTablesNextToCode' :: MonadIO m => DynFlags -> m Bool
+checkBrokenTablesNextToCode' dflags
+  | not (isARM arch)              = return False
+  | WayDyn `notElem` ways dflags  = return False
+  | not (tablesNextToCode dflags) = return False
+  | otherwise                     = do
+    linkerInfo <- liftIO $ getLinkerInfo dflags
+    case linkerInfo of
+      GnuLD _  -> return True
+      _        -> return False
+  where platform = targetPlatform dflags
+        arch = platformArch platform
 
 
 -- %************************************************************************
@@ -492,7 +534,7 @@ initGhcMonad mb_top_dir = do
 -- flags.  If you are not doing linking or doing static linking, you
 -- can ignore the list of packages returned.
 --
-setSessionDynFlags :: GhcMonad m => DynFlags -> m [PackageId]
+setSessionDynFlags :: GhcMonad m => DynFlags -> m [PackageKey]
 setSessionDynFlags dflags = do
   (dflags', preload) <- liftIO $ initPackages dflags
   modifySession $ \h -> h{ hsc_dflags = dflags'
@@ -501,7 +543,7 @@ setSessionDynFlags dflags = do
   return preload
 
 -- | Sets the program 'DynFlags'.
-setProgramDynFlags :: GhcMonad m => DynFlags -> m [PackageId]
+setProgramDynFlags :: GhcMonad m => DynFlags -> m [PackageKey]
 setProgramDynFlags dflags = do
   (dflags', preload) <- liftIO $ initPackages dflags
   modifySession $ \h -> h{ hsc_dflags = dflags' }
@@ -885,43 +927,6 @@ compileToCoreModule = compileCore False
 -- as to return simplified and tidied Core.
 compileToCoreSimplified :: GhcMonad m => FilePath -> m CoreModule
 compileToCoreSimplified = compileCore True
--- | Takes a CoreModule and compiles the bindings therein
--- to object code. The first argument is a bool flag indicating
--- whether to run the simplifier.
--- The resulting .o, .hi, and executable files, if any, are stored in the
--- current directory, and named according to the module name.
--- This has only so far been tested with a single self-contained module.
-compileCoreToObj :: GhcMonad m
-                 => Bool -> CoreModule -> FilePath -> FilePath -> m ()
-compileCoreToObj simplify cm@(CoreModule{ cm_module = mName })
-                 output_fn extCore_filename = do
-  dflags      <- getSessionDynFlags
-  currentTime <- liftIO $ getCurrentTime
-  cwd         <- liftIO $ getCurrentDirectory
-  modLocation <- liftIO $ mkHiOnlyModLocation dflags (hiSuf dflags) cwd
-                   ((moduleNameSlashes . moduleName) mName)
-
-  let modSum = ModSummary { ms_mod = mName,
-         ms_hsc_src = ExtCoreFile,
-         ms_location = modLocation,
-         -- By setting the object file timestamp to Nothing,
-         -- we always force recompilation, which is what we
-         -- want. (Thus it doesn't matter what the timestamp
-         -- for the (nonexistent) source file is.)
-         ms_hs_date = currentTime,
-         ms_obj_date = Nothing,
-         -- Only handling the single-module case for now, so no imports.
-         ms_srcimps = [],
-         ms_textual_imps = [],
-         -- No source file
-         ms_hspp_file = "",
-         ms_hspp_opts = dflags,
-         ms_hspp_buf = Nothing
-      }
-
-  hsc_env <- getSession
-  liftIO $ hscCompileCore hsc_env simplify (cm_safe cm) modSum (cm_binds cm) output_fn extCore_filename
-
 
 compileCore :: GhcMonad m => Bool -> FilePath -> m CoreModule
 compileCore simplify fn = do
@@ -1164,7 +1169,7 @@ getGRE = withSession $ \hsc_env-> return $ ic_rn_gbl_env (hsc_IC hsc_env)
 
 -- | Return all /external/ modules available in the package database.
 -- Modules from the current session (i.e., from the 'HomePackageTable') are
--- not included.
+-- not included.  This includes module names which are reexported by packages.
 packageDbModules :: GhcMonad m =>
                     Bool  -- ^ Only consider exposed packages.
                  -> m [Module]
@@ -1172,10 +1177,12 @@ packageDbModules only_exposed = do
    dflags <- getSessionDynFlags
    let pkgs = eltsUFM (pkgIdMap (pkgState dflags))
    return $
-     [ mkModule pid modname | p <- pkgs
-                            , not only_exposed || exposed p
-                            , let pid = packageConfigId p
-                            , modname <- exposedModules p ]
+     [ mkModule pid modname
+     | p <- pkgs
+     , not only_exposed || exposed p
+     , let pid = packageConfigId p
+     , modname <- exposedModules p
+               ++ map exportName (reexportedModules p) ]
 
 -- -----------------------------------------------------------------------------
 -- Misc exported utils
@@ -1296,7 +1303,7 @@ showRichTokenStream ts = go startLoc ts ""
 -- -----------------------------------------------------------------------------
 -- Interactive evaluation
 
--- | Takes a 'ModuleName' and possibly a 'PackageId', and consults the
+-- | Takes a 'ModuleName' and possibly a 'PackageKey', and consults the
 -- filesystem and package database to find the corresponding 'Module', 
 -- using the algorithm that is used for an @import@ declaration.
 findModule :: GhcMonad m => ModuleName -> Maybe FastString -> m Module
@@ -1306,11 +1313,11 @@ findModule mod_name maybe_pkg = withSession $ \hsc_env -> do
     this_pkg = thisPackage dflags
   --
   case maybe_pkg of
-    Just pkg | fsToPackageId pkg /= this_pkg && pkg /= fsLit "this" -> liftIO $ do
+    Just pkg | fsToPackageKey pkg /= this_pkg && pkg /= fsLit "this" -> liftIO $ do
       res <- findImportedModule hsc_env mod_name maybe_pkg
       case res of
         Found _ m -> return m
-        err       -> noModError dflags noSrcSpan mod_name err
+        err       -> throwOneError $ noModError dflags noSrcSpan mod_name err
     _otherwise -> do
       home <- lookupLoadedHomeModule mod_name
       case home of
@@ -1318,9 +1325,9 @@ findModule mod_name maybe_pkg = withSession $ \hsc_env -> do
         Nothing -> liftIO $ do
            res <- findImportedModule hsc_env mod_name maybe_pkg
            case res of
-             Found loc m | modulePackageId m /= this_pkg -> return m
+             Found loc m | modulePackageKey m /= this_pkg -> return m
                          | otherwise -> modNotLoadedError dflags m loc
-             err -> noModError dflags noSrcSpan mod_name err
+             err -> throwOneError $ noModError dflags noSrcSpan mod_name err
 
 modNotLoadedError :: DynFlags -> Module -> ModLocation -> IO a
 modNotLoadedError dflags m loc = throwGhcExceptionIO $ CmdLineError $ showSDoc dflags $
@@ -1345,7 +1352,7 @@ lookupModule mod_name Nothing = withSession $ \hsc_env -> do
       res <- findExposedPackageModule hsc_env mod_name Nothing
       case res of
         Found _ m -> return m
-        err       -> noModError (hsc_dflags hsc_env) noSrcSpan mod_name err
+        err       -> throwOneError $ noModError (hsc_dflags hsc_env) noSrcSpan mod_name err
 
 lookupLoadedHomeModule :: GhcMonad m => ModuleName -> m (Maybe Module)
 lookupLoadedHomeModule mod_name = withSession $ \hsc_env ->
@@ -1363,7 +1370,7 @@ isModuleTrusted m = withSession $ \hsc_env ->
     liftIO $ hscCheckSafe hsc_env m noSrcSpan
 
 -- | Return if a module is trusted and the pkgs it depends on to be trusted.
-moduleTrustReqs :: GhcMonad m => Module -> m (Bool, [PackageId])
+moduleTrustReqs :: GhcMonad m => Module -> m (Bool, [PackageKey])
 moduleTrustReqs m = withSession $ \hsc_env ->
     liftIO $ hscGetSafe hsc_env m noSrcSpan
 

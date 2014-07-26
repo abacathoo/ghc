@@ -16,8 +16,25 @@
 --     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#Warnings
 -- for details
 
-module Parser ( parseModule, parseStmt, parseIdentifier, parseType,
-                parseHeader ) where
+-- | This module provides the generated Happy parser for Haskell. It exports
+-- a number of parsers which may be used in any library that uses the GHC API.
+-- A common usage pattern is to initialize the parser state with a given string
+-- and then parse that string:
+--
+-- @
+--     runParser :: DynFlags -> String -> P a -> ParseResult a
+--     runParser flags str parser = unP parser parseState
+--     where
+--       filename = "\<interactive\>"
+--       location = mkRealSrcLoc (mkFastString filename) 1 1
+--       buffer = stringToStringBuffer str
+--       parseState = mkPState flags buffer location in
+-- @
+module Parser (parseModule, parseImport, parseStatement,
+               parseDeclaration, parseExpression, parseTypeSignature,
+               parseFullStmt, parseStmt, parseIdentifier,
+               parseType, parseHeader) where
+
 
 import HsSyn
 import RdrHsSyn
@@ -227,7 +244,6 @@ incorrect.
  'then'         { L _ ITthen }
  'type'         { L _ ITtype }
  'where'        { L _ ITwhere }
- '_scc_'        { L _ ITscc }         -- ToDo: remove
 
  'forall'       { L _ ITforall }                -- GHC extension keywords
  'foreign'      { L _ ITforeign }
@@ -250,6 +266,7 @@ incorrect.
  'group'    { L _ ITgroup }     -- for list transform extension
  'by'       { L _ ITby }        -- for list transform extension
  'using'    { L _ ITusing }     -- for list transform extension
+ 'pattern'      { L _ ITpattern } -- for pattern synonyms
 
  '{-# INLINE'             { L _ (ITinline_prag _ _) }
  '{-# SPECIALISE'         { L _ ITspec_prag }
@@ -269,6 +286,9 @@ incorrect.
  '{-# NOVECTORISE'        { L _ ITnovect_prag }
  '{-# MINIMAL'            { L _ ITminimal_prag }
  '{-# CTYPE'              { L _ ITctype }
+ '{-# NO_OVERLAP'         { L _ ITno_overlap_prag }
+ '{-# OVERLAP'            { L _ IToverlap_prag }
+ '{-# INCOHERENT'         { L _ ITincoherent_prag }
  '#-}'                                          { L _ ITclose_prag }
 
  '..'           { L _ ITdotdot }                        -- reserved symbols
@@ -348,20 +368,32 @@ incorrect.
 '[t|'           { L _ ITopenTypQuote  }
 '[d|'           { L _ ITopenDecQuote  }
 '|]'            { L _ ITcloseQuote    }
+'[||'           { L _ ITopenTExpQuote   }
+'||]'           { L _ ITcloseTExpQuote  }
 TH_ID_SPLICE    { L _ (ITidEscape _)  }     -- $x
 '$('            { L _ ITparenEscape   }     -- $( exp )
+TH_ID_TY_SPLICE { L _ (ITidTyEscape _)  }   -- $$x
+'$$('           { L _ ITparenTyEscape   }   -- $$( exp )
 TH_TY_QUOTE     { L _ ITtyQuote       }      -- ''T
 TH_QUASIQUOTE   { L _ (ITquasiQuote _) }
 TH_QQUASIQUOTE  { L _ (ITqQuasiQuote _) }
 
 %monad { P } { >>= } { return }
 %lexer { lexer } { L _ ITeof }
+%tokentype { (Located Token) }
+
+-- Exported parsers
 %name parseModule module
+%name parseImport importdecl
+%name parseStatement stmt
+%name parseDeclaration topdecl
+%name parseExpression exp
+%name parseTypeSignature sigdecl
+%name parseFullStmt   stmt
 %name parseStmt   maybe_stmt
 %name parseIdentifier  identifier
 %name parseType ctype
 %partial parseHeader header
-%tokentype { (Located Token) }
 %%
 
 -----------------------------------------------------------------------------
@@ -475,6 +507,7 @@ export  :: { OrdList (LIE RdrName) }
         : qcname_ext export_subspec     { unitOL (LL (mkModuleImpExp (unLoc $1)
                                                                      (unLoc $2))) }
         |  'module' modid               { unitOL (LL (IEModuleContents (unLoc $2))) }
+        |  'pattern' qcon               { unitOL (LL (IEVar (unLoc $2))) }
 
 export_subspec :: { Located ImpExpSubSpec }
         : {- empty -}                   { L0 ImpExpAbs }
@@ -595,13 +628,13 @@ topdecl :: { OrdList (LHsDecl RdrName) }
                                                     VectD (HsVectTypeIn True $3 (Just $5)) }
         | '{-# VECTORISE' 'class' gtycon '#-}'  { unitOL $ LL $ VectD (HsVectClassIn $3) }
         | annotation { unitOL $1 }
-        | decl                                  { unLoc $1 }
+        | decl_no_th                            { unLoc $1 }
 
         -- Template Haskell Extension
         -- The $(..) form is one possible form of infixexp
         -- but we treat an arbitrary expression just as if
         -- it had a $(..) wrapped around it
-        | infixexp                              { unitOL (LL $ mkTopSpliceDecl $1) }
+        | infixexp                              { unitOL (LL $ mkSpliceDecl $1) }
 
 -- Type classes
 --
@@ -626,8 +659,7 @@ ty_decl :: { LTyClDecl RdrName }
         | 'type' 'family' type opt_kind_sig where_type_family
                 -- Note the use of type for the head; this allows
                 -- infix type constructors to be declared
-                {% do { L loc decl <- mkFamDecl (comb4 $1 $3 $4 $5) (unLoc $5) $3 (unLoc $4)
-                      ; return (L loc (FamDecl decl)) } }
+                {% mkFamDecl (comb4 $1 $3 $4 $5) (unLoc $5) $3 (unLoc $4) }
 
           -- ordinary data type or newtype declaration
         | data_or_newtype capi_ctype tycl_hdr constrs deriving
@@ -647,35 +679,39 @@ ty_decl :: { LTyClDecl RdrName }
 
           -- data/newtype family
         | 'data' 'family' type opt_kind_sig
-                {% do { L loc decl <- mkFamDecl (comb3 $1 $2 $4) DataFamily $3 (unLoc $4)
-                      ; return (L loc (FamDecl decl)) } }
+                {% mkFamDecl (comb3 $1 $2 $4) DataFamily $3 (unLoc $4) }
 
 inst_decl :: { LInstDecl RdrName }
-        : 'instance' inst_type where_inst
-                 { let (binds, sigs, _, ats, adts, _) = cvBindsAndSigs (unLoc $3) in
-                   let cid = ClsInstDecl { cid_poly_ty = $2, cid_binds = binds
+        : 'instance' overlap_pragma inst_type where_inst
+                 { let (binds, sigs, _, ats, adts, _) = cvBindsAndSigs (unLoc $4) in
+                   let cid = ClsInstDecl { cid_poly_ty = $3, cid_binds = binds
                                          , cid_sigs = sigs, cid_tyfam_insts = ats
+                                         , cid_overlap_mode = $2
                                          , cid_datafam_insts = adts }
-                   in L (comb3 $1 $2 $3) (ClsInstD { cid_inst = cid }) }
+                   in L (comb3 $1 $3 $4) (ClsInstD { cid_inst = cid }) }
 
            -- type instance declarations
         | 'type' 'instance' ty_fam_inst_eqn
-                {% do { L loc tfi <- mkTyFamInst (comb2 $1 $3) $3
-                      ; return (L loc (TyFamInstD { tfid_inst = tfi })) } }
+                {% mkTyFamInst (comb2 $1 $3) $3 }
 
           -- data/newtype instance declaration
-        | data_or_newtype 'instance' tycl_hdr constrs deriving
-                {% do { L loc d <- mkFamInstData (comb4 $1 $3 $4 $5) (unLoc $1) Nothing $3
-                                      Nothing (reverse (unLoc $4)) (unLoc $5)
-                      ; return (L loc (DataFamInstD { dfid_inst = d })) } }
+        | data_or_newtype 'instance' capi_ctype tycl_hdr constrs deriving
+                {% mkDataFamInst (comb4 $1 $4 $5 $6) (unLoc $1) $3 $4
+                                      Nothing (reverse (unLoc $5)) (unLoc $6) }
 
           -- GADT instance declaration
-        | data_or_newtype 'instance' tycl_hdr opt_kind_sig
+        | data_or_newtype 'instance' capi_ctype tycl_hdr opt_kind_sig
                  gadt_constrlist
                  deriving
-                {% do { L loc d <- mkFamInstData (comb4 $1 $3 $5 $6) (unLoc $1) Nothing $3
-                                            (unLoc $4) (unLoc $5) (unLoc $6)
-                      ; return (L loc (DataFamInstD { dfid_inst = d })) } }
+                {% mkDataFamInst (comb4 $1 $4 $6 $7) (unLoc $1) $3 $4
+                                     (unLoc $5) (unLoc $6) (unLoc $7) }
+
+overlap_pragma :: { Maybe OverlapMode }
+  : '{-# OVERLAP'    '#-}'    { Just OverlapOk  }
+  | '{-# INCOHERENT' '#-}'    { Just Incoherent }
+  | '{-# NO_OVERLAP' '#-}'    { Just NoOverlap  }
+  | {- empty -}               { Nothing }
+
 
 -- Closed type families
 
@@ -712,44 +748,46 @@ ty_fam_inst_eqn :: { LTyFamInstEqn RdrName }
 --   data declarations.
 --
 at_decl_cls :: { LHsDecl RdrName }
-           -- family declarations
-        : 'type' type opt_kind_sig
-                -- Note the use of type for the head; this allows
-                -- infix type constructors to be declared.
-                {% do { L loc decl <- mkFamDecl (comb3 $1 $2 $3) OpenTypeFamily $2 (unLoc $3)
-                      ; return (L loc (TyClD (FamDecl decl))) } }
+        :  -- data family declarations, with optional 'family' keyword
+          'data' opt_family type opt_kind_sig
+                {% liftM mkTyClD (mkFamDecl (comb3 $1 $3 $4) DataFamily $3 (unLoc $4)) }
 
-        | 'data' type opt_kind_sig
-                {% do { L loc decl <- mkFamDecl (comb3 $1 $2 $3) DataFamily $2 (unLoc $3)
-                      ; return (L loc (TyClD (FamDecl decl))) } }
+           -- type family declarations, with optional 'family' keyword
+           -- (can't use opt_instance because you get shift/reduce errors
+        | 'type' type opt_kind_sig
+                {% liftM mkTyClD (mkFamDecl (comb3 $1 $2 $3) OpenTypeFamily $2 (unLoc $3)) }
+        | 'type' 'family' type opt_kind_sig
+                {% liftM mkTyClD (mkFamDecl (comb3 $1 $3 $4) OpenTypeFamily $3 (unLoc $4)) }
 
-           -- default type instance
+           -- default type instances, with optional 'instance' keyword
         | 'type' ty_fam_inst_eqn
-                -- Note the use of type for the head; this allows
-                -- infix type constructors and type patterns
-                {% do { L loc tfi <- mkTyFamInst (comb2 $1 $2) $2
-                      ; return (L loc (InstD (TyFamInstD { tfid_inst = tfi }))) } }
+                {% liftM mkInstD (mkTyFamInst (comb2 $1 $2) $2) }
+        | 'type' 'instance' ty_fam_inst_eqn
+                {% liftM mkInstD (mkTyFamInst (comb2 $1 $3) $3) }
+
+opt_family   :: { () }
+              : {- empty -}   { () }
+              | 'family'      { () }
 
 -- Associated type instances
 --
-at_decl_inst :: { LTyFamInstDecl RdrName }
+at_decl_inst :: { LInstDecl RdrName }
            -- type instance declarations
         : 'type' ty_fam_inst_eqn
                 -- Note the use of type for the head; this allows
                 -- infix type constructors and type patterns
                 {% mkTyFamInst (comb2 $1 $2) $2 }
 
-adt_decl_inst :: { LDataFamInstDecl RdrName }
         -- data/newtype instance declaration
-        : data_or_newtype capi_ctype tycl_hdr constrs deriving
-                {% mkFamInstData (comb4 $1 $3 $4 $5) (unLoc $1) $2 $3
+        | data_or_newtype capi_ctype tycl_hdr constrs deriving
+                {% mkDataFamInst (comb4 $1 $3 $4 $5) (unLoc $1) $2 $3
                                  Nothing (reverse (unLoc $4)) (unLoc $5) }
 
         -- GADT instance declaration
         | data_or_newtype capi_ctype tycl_hdr opt_kind_sig
                  gadt_constrlist
                  deriving
-                {% mkFamInstData (comb4 $1 $3 $5 $6) (unLoc $1) $2 $3
+                {% mkDataFamInst (comb4 $1 $3 $5 $6) (unLoc $1) $2 $3
                                  (unLoc $4) (unLoc $5) (unLoc $6) }
 
 data_or_newtype :: { Located NewOrData }
@@ -781,7 +819,7 @@ capi_ctype : '{-# CTYPE' STRING STRING '#-}' { Just (CType (Just (Header (getSTR
 
 -- Glasgow extension: stand-alone deriving declarations
 stand_alone_deriving :: { LDerivDecl RdrName }
-        : 'deriving' 'instance' inst_type { LL (DerivDecl $3) }
+  : 'deriving' 'instance' overlap_pragma inst_type { LL (DerivDecl $4 $3) }
 
 -----------------------------------------------------------------------------
 -- Role annotations
@@ -803,6 +841,21 @@ roles : role             { LL [$1] }
 role :: { Located (Maybe FastString) }
 role : VARID             { L1 $ Just $ getVARID $1 }
      | '_'               { L1 Nothing }
+
+-- Pattern synonyms
+
+-- Glasgow extension: pattern synonyms
+pattern_synonym_decl :: { LHsDecl RdrName }
+        : 'pattern' con vars0 patsyn_token pat { LL . ValD $ mkPatSynBind $2 (PrefixPatSyn $3) $5 $4 }
+        | 'pattern' varid conop varid patsyn_token pat { LL . ValD $ mkPatSynBind $3 (InfixPatSyn $2 $4) $6 $5 }
+
+vars0 :: { [Located RdrName] }
+        : {- empty -}                 { [] }
+        | varid vars0                 { $1 : $2 }
+
+patsyn_token :: { HsPatSynDir RdrName }
+        : '<-' { Unidirectional }
+        | '='  { ImplicitBidirectional }
 
 -----------------------------------------------------------------------------
 -- Nested declarations
@@ -841,8 +894,7 @@ where_cls :: { Located (OrdList (LHsDecl RdrName)) }    -- Reversed
 -- Declarations in instance bodies
 --
 decl_inst  :: { Located (OrdList (LHsDecl RdrName)) }
-decl_inst  : at_decl_inst               { LL (unitOL (L1 (InstD (TyFamInstD { tfid_inst = unLoc $1 })))) }
-           | adt_decl_inst              { LL (unitOL (L1 (InstD (DataFamInstD { dfid_inst = unLoc $1 })))) }
+decl_inst  : at_decl_inst               { LL (unitOL (L1 (InstD (unLoc $1)))) }
            | decl                       { $1 }
 
 decls_inst :: { Located (OrdList (LHsDecl RdrName)) }   -- Reversed
@@ -1025,7 +1077,7 @@ sigtypedoc :: { LHsType RdrName }       -- Always a HsForAllTy
         : ctypedoc                      { L1 (mkImplicitHsForAllTy (noLoc []) $1) }
         -- Wrap an Implicit forall if there isn't one there already
 
-sig_vars :: { Located [Located RdrName] }
+sig_vars :: { Located [Located RdrName] }  -- Returned in reversed order
          : sig_vars ',' var             { LL ($3 : unLoc $1) }
          | var                          { L1 [$1] }
 
@@ -1135,10 +1187,11 @@ atype :: { LHsType RdrName }
         | TH_ID_SPLICE                   { LL $ mkHsSpliceTy $ L1 $ HsVar $
                                            mkUnqual varName (getTH_ID_SPLICE $1) }
                                                       -- see Note [Promotion] for the followings
-        | SIMPLEQUOTE qconid                          { LL $ HsTyVar $ unLoc $2 }
-        | SIMPLEQUOTE  '(' ')'                        { LL $ HsTyVar $ getRdrName unitDataCon }
+        | SIMPLEQUOTE qcon                            { LL $ HsTyVar $ unLoc $2 }
         | SIMPLEQUOTE  '(' ctype ',' comma_types1 ')' { LL $ HsExplicitTupleTy [] ($3 : $5) }
         | SIMPLEQUOTE  '[' comma_types0 ']'           { LL $ HsExplicitListTy placeHolderKind $3 }
+        | SIMPLEQUOTE var                             { LL $ HsTyVar $ unLoc $2 }
+
         | '[' ctype ',' comma_types1 ']'              { LL $ HsExplicitListTy placeHolderKind ($2 : $4) }
         | INTEGER            {% mkTyLit $ LL $ HsNumTy $ getINTEGER $1 }
         | STRING             {% mkTyLit $ LL $ HsStrTy $ getSTRING  $1 }
@@ -1363,7 +1416,7 @@ docdecld :: { LDocDecl }
         | docnamed                              { L1 (case (unLoc $1) of (n, doc) -> DocCommentNamed n doc) }
         | docsection                            { L1 (case (unLoc $1) of (n, doc) -> DocGroup n doc) }
 
-decl    :: { Located (OrdList (LHsDecl RdrName)) }
+decl_no_th :: { Located (OrdList (LHsDecl RdrName)) }
         : sigdecl               { $1 }
 
         | '!' aexp rhs          {% do { let { e = LL (SectionR (LL (HsVar bang_RDR)) $2) };
@@ -1377,7 +1430,16 @@ decl    :: { Located (OrdList (LHsDecl RdrName)) }
         | infixexp opt_sig rhs  {% do { r <- checkValDef empty $1 $2 $3;
                                         let { l = comb2 $1 $> };
                                         return $! (sL l (unitOL $! (sL l $ ValD r))) } }
+        | pattern_synonym_decl  { LL $ unitOL $1 }
         | docdecl               { LL $ unitOL $1 }
+
+decl    :: { Located (OrdList (LHsDecl RdrName)) }
+        : decl_no_th            { $1 }
+
+        -- Why do we only allow naked declaration splices in top-level
+        -- declarations and not here? Short answer: because readFail009
+        -- fails terribly with a panic in cvBindsAndSigs otherwise.
+        | splice_exp            { LL $ unitOL (LL $ mkSpliceDecl $1) }
 
 rhs     :: { Located (GRHSs RdrName (LHsExpr RdrName)) }
         : '=' exp wherebinds    { sL (comb3 $1 $2 $3) $ GRHSs (unguardedRHS $2) (unLoc $3) }
@@ -1397,7 +1459,7 @@ sigdecl :: { Located (OrdList (LHsDecl RdrName)) }
                         {% do s <- checkValSig $1 $3
                         ; return (LL $ unitOL (LL $ SigD s)) }
         | var ',' sig_vars '::' sigtypedoc
-                                { LL $ toOL [ LL $ SigD (TypeSig ($1 : unLoc $3) $5) ] }
+                                { LL $ toOL [ LL $ SigD (TypeSig ($1 : reverse (unLoc $3)) $5) ] }
         | infix prec ops        { LL $ toOL [ LL $ SigD (FixSig (FixitySig n (Fixity $2 (unLoc $1))))
                                              | n <- unLoc $3 ] }
         | '{-# INLINE' activation qvar '#-}'
@@ -1450,18 +1512,18 @@ infixexp :: { LHsExpr RdrName }
 
 exp10 :: { LHsExpr RdrName }
         : '\\' apat apats opt_asig '->' exp
-                        { LL $ HsLam (mkMatchGroup [LL $ Match ($2:$3) $4
+                        { LL $ HsLam (mkMatchGroup FromSource [LL $ Match ($2:$3) $4
                                                                 (unguardedGRHSs $6)
-                                                            ]) }
+                                                              ]) }
         | 'let' binds 'in' exp                  { LL $ HsLet (unLoc $2) $4 }
         | '\\' 'lcase' altslist
-            { LL $ HsLamCase placeHolderType (mkMatchGroup (unLoc $3)) }
+            { LL $ HsLamCase placeHolderType (mkMatchGroup FromSource (unLoc $3)) }
         | 'if' exp optSemi 'then' exp optSemi 'else' exp
                                         {% checkDoAndIfThenElse $2 $3 $5 $6 $8 >>
                                            return (LL $ mkHsIf $2 $5 $8) }
         | 'if' ifgdpats                 {% hintMultiWayIf (getLoc $1) >>
                                            return (LL $ HsMultiIf placeHolderType (reverse $ unLoc $2)) }
-        | 'case' exp 'of' altslist              { LL $ HsCase $2 (mkMatchGroup (unLoc $4)) }
+        | 'case' exp 'of' altslist              { LL $ HsCase $2 (mkMatchGroup FromSource (unLoc $4)) }
         | '-' fexp                              { LL $ NegApp $2 noSyntaxExpr }
 
         | 'do' stmtlist                 { L (comb2 $1 $2) (mkHsDo DoExpr  (unLoc $2)) }
@@ -1492,9 +1554,7 @@ optSemi :: { Bool }
         | {- empty -} { False }
 
 scc_annot :: { Located FastString }
-        : '_scc_' STRING                        {% (addWarning Opt_WarnWarningsDeprecations (getLoc $1) (text "_scc_ is deprecated; use an SCC pragma instead")) >>= \_ ->
-                                   ( do scc <- getSCC $2; return $ LL scc ) }
-        | '{-# SCC' STRING '#-}'                {% do scc <- getSCC $2; return $ LL scc }
+        : '{-# SCC' STRING '#-}'                {% do scc <- getSCC $2; return $ LL scc }
         | '{-# SCC' VARID  '#-}'                { LL (getVARID $2) }
 
 hpc_annot :: { Located (FastString,(Int,Int),(Int,Int)) }
@@ -1548,17 +1608,14 @@ aexp2   :: { LHsExpr RdrName }
         | '_'                           { L1 EWildPat }
 
         -- Template Haskell Extension
-        | TH_ID_SPLICE          { L1 $ HsSpliceE (mkHsSplice
-                                        (L1 $ HsVar (mkUnqual varName
-                                                        (getTH_ID_SPLICE $1)))) }
-        | '$(' exp ')'          { LL $ HsSpliceE (mkHsSplice $2) }
-
+        | splice_exp            { $1 }
 
         | SIMPLEQUOTE  qvar     { LL $ HsBracket (VarBr True  (unLoc $2)) }
         | SIMPLEQUOTE  qcon     { LL $ HsBracket (VarBr True  (unLoc $2)) }
         | TH_TY_QUOTE tyvar     { LL $ HsBracket (VarBr False (unLoc $2)) }
         | TH_TY_QUOTE gtycon    { LL $ HsBracket (VarBr False (unLoc $2)) }
         | '[|' exp '|]'         { LL $ HsBracket (ExpBr $2) }
+        | '[||' exp '||]'       { LL $ HsBracket (TExpBr $2) }
         | '[t|' ctype '|]'      { LL $ HsBracket (TypBr $2) }
         | '[p|' infixexp '|]'   {% checkPattern empty $2 >>= \p ->
                                         return (LL $ HsBracket (PatBr p)) }
@@ -1567,6 +1624,16 @@ aexp2   :: { LHsExpr RdrName }
 
         -- arrow notation extension
         | '(|' aexp2 cmdargs '|)'       { LL $ HsArrForm $2 Nothing (reverse $3) }
+
+splice_exp :: { LHsExpr RdrName }
+        : TH_ID_SPLICE          { L1 $ mkHsSpliceE 
+                                        (L1 $ HsVar (mkUnqual varName 
+                                                        (getTH_ID_SPLICE $1))) } 
+        | '$(' exp ')'          { LL $ mkHsSpliceE $2 }               
+        | TH_ID_TY_SPLICE       { L1 $ mkHsSpliceTE 
+                                        (L1 $ HsVar (mkUnqual varName 
+                                                        (getTH_ID_TY_SPLICE $1))) } 
+        | '$$(' exp ')'         { LL $ mkHsSpliceTE $2 }               
 
 cmdargs :: { [LHsCmdTop RdrName] }
         : cmdargs acmd                  { $2 : $1 }
@@ -2214,6 +2281,7 @@ getPRIMWORD     (L _ (ITprimword x)) = x
 getPRIMFLOAT    (L _ (ITprimfloat  x)) = x
 getPRIMDOUBLE   (L _ (ITprimdouble x)) = x
 getTH_ID_SPLICE (L _ (ITidEscape x)) = x
+getTH_ID_TY_SPLICE (L _ (ITidTyEscape x)) = x
 getINLINE       (L _ (ITinline_prag inl conl)) = (inl,conl)
 getSPEC_INLINE  (L _ (ITspec_inline_prag True))  = (Inline,  FunLike)
 getSPEC_INLINE  (L _ (ITspec_inline_prag False)) = (NoInline,FunLike)

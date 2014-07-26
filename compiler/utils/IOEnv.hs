@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable, UndecidableInstances #-}
+
 --
 -- (c) The University of Glasgow 2002-2006
 --
@@ -7,7 +9,6 @@
 -- as its in the IO monad, mutable references can be used
 -- for updating state.
 --
-{-# LANGUAGE UndecidableInstances #-}
 
 module IOEnv (
         IOEnv, -- Instance of Monad
@@ -22,7 +23,7 @@ module IOEnv (
         -- Getting at the environment
         getEnv, setEnv, updEnv,
 
-        runIOEnv, unsafeInterleaveM,
+        runIOEnv, unsafeInterleaveM, uninterruptibleMaskM_,
         tryM, tryAllM, tryMostM, fixM,
 
         -- I/O operations
@@ -149,6 +150,8 @@ tryMostM (IOEnv thing) = IOEnv (\ env -> tryMost (thing env))
 unsafeInterleaveM :: IOEnv env a -> IOEnv env a
 unsafeInterleaveM (IOEnv m) = IOEnv (\ env -> unsafeInterleaveIO (m env))
 
+uninterruptibleMaskM_ :: IOEnv env a -> IOEnv env a
+uninterruptibleMaskM_ (IOEnv m) = IOEnv (\ env -> uninterruptibleMask_ (m env))
 
 ----------------------------------------------------------------------
 -- Alternative/MonadPlus

@@ -12,7 +12,8 @@ have a standard form, namely:
 - primitive operations
 
 \begin{code}
-{-# OPTIONS -fno-warn-tabs #-}
+{-# LANGUAGE CPP #-}
+{-# OPTIONS_GHC -fno-warn-tabs #-}
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
@@ -20,7 +21,7 @@ have a standard form, namely:
 -- for details
 
 module MkId (
-        mkDictFunId, mkDictFunTy, mkDictSelId,
+        mkDictFunId, mkDictFunTy, mkDictSelId, mkDictSelRhs,
 
         mkPrimOpId, mkFCallId,
 
@@ -33,9 +34,10 @@ module MkId (
 
         -- And some particular Ids; see below for why they are wired in
         wiredInIds, ghcPrimIds,
-        unsafeCoerceName, unsafeCoerceId, realWorldPrimId, 
-        voidArgId, nullAddrId, seqId, lazyId, lazyIdKey,
-        coercionTokenId, magicSingIId,
+        unsafeCoerceName, unsafeCoerceId, realWorldPrimId,
+        voidPrimId, voidArgId,
+        nullAddrId, seqId, lazyId, lazyIdKey,
+        coercionTokenId, magicDictId, coerceId,
 
 	-- Re-export error Ids
 	module PrelRules
@@ -65,7 +67,6 @@ import PrimOp
 import ForeignCall
 import DataCon
 import Id
-import Var              ( mkExportedLocalVar )
 import IdInfo
 import Demand
 import CoreSyn
@@ -124,7 +125,7 @@ is right here.
 \begin{code}
 wiredInIds :: [Id]
 wiredInIds
-  =  [lazyId]
+  =  [lazyId, dollarId]
   ++ errorIds		-- Defined in MkCore
   ++ ghcPrimIds
 
@@ -134,10 +135,11 @@ ghcPrimIds
   = [   -- These can't be defined in Haskell, but they have
         -- perfectly reasonable unfoldings in Core
     realWorldPrimId,
+    voidPrimId,
     unsafeCoerceId,
     nullAddrId,
     seqId,
-    magicSingIId,
+    magicDictId,
     coerceId,
     proxyHashId
     ]
@@ -270,39 +272,36 @@ at the outside.  When dealing with classes it's very convenient to
 recover the original type signature from the class op selector.
 
 \begin{code}
-mkDictSelId :: DynFlags
-            -> Bool	     -- True <=> don't include the unfolding
-			     -- Little point on imports without -O, because the
-			     -- dictionary itself won't be visible
- 	    -> Name	     -- Name of one of the *value* selectors 
+mkDictSelId :: Name	     -- Name of one of the *value* selectors 
 	       		     -- (dictionary superclass or method)
             -> Class -> Id
-mkDictSelId dflags no_unf name clas
+mkDictSelId name clas
   = mkGlobalId (ClassOpId clas) name sel_ty info
   where
-    sel_ty = mkForAllTys tyvars (mkFunTy (idType dict_id) (idType the_arg_id))
-        -- We can't just say (exprType rhs), because that would give a type
-        --      C a -> C a
-        -- for a single-op class (after all, the selector is the identity)
-        -- But it's type must expose the representation of the dictionary
-        -- to get (say)         C a -> (a -> a)
+    tycon      	   = classTyCon clas
+    sel_names      = map idName (classAllSelIds clas)
+    new_tycon  	   = isNewTyCon tycon
+    [data_con] 	   = tyConDataCons tycon
+    tyvars     	   = dataConUnivTyVars data_con
+    arg_tys    	   = dataConRepArgTys data_con	-- Includes the dictionary superclasses
+    val_index      = assoc "MkId.mkDictSelId" (sel_names `zip` [0..]) name
+
+    sel_ty = mkForAllTys tyvars (mkFunTy (mkClassPred clas (mkTyVarTys tyvars))
+                                         (getNth arg_tys val_index))
 
     base_info = noCafIdInfo
                 `setArityInfo`         1
                 `setStrictnessInfo`    strict_sig
-                `setUnfoldingInfo`     (if no_unf then noUnfolding
-	                                else mkImplicitUnfolding dflags rhs)
-		   -- In module where class op is defined, we must add
-		   -- the unfolding, even though it'll never be inlined
-		   -- because we use that to generate a top-level binding
-		   -- for the ClassOp
 
-    info | new_tycon = base_info `setInlinePragInfo` alwaysInlinePragma
+    info | new_tycon
+         = base_info `setInlinePragInfo` alwaysInlinePragma
+                     `setUnfoldingInfo`  mkInlineUnfolding (Just 1) (mkDictSelRhs clas val_index)
     	   	   -- See Note [Single-method classes] in TcInstDcls
 		   -- for why alwaysInlinePragma
-         | otherwise = base_info  `setSpecInfo`       mkSpecInfo [rule]
-		       		  `setInlinePragInfo` neverInlinePragma
-		   -- Add a magic BuiltinRule, and never inline it
+
+         | otherwise
+         = base_info `setSpecInfo` mkSpecInfo [rule]
+		   -- Add a magic BuiltinRule, but no unfolding
 		   -- so that the rule is always available to fire.
 		   -- See Note [ClassOp/DFun selection] in TcInstDcls
 
@@ -321,28 +320,29 @@ mkDictSelId dflags no_unf name clas
         -- It's worth giving one, so that absence info etc is generated
         -- even if the selector isn't inlined
 
-    strict_sig = mkStrictSig (mkTopDmdType [arg_dmd] topRes)
+    strict_sig = mkClosedStrictSig [arg_dmd] topRes
     arg_dmd | new_tycon = evalDmd
             | otherwise = mkManyUsedDmd $
-                          mkProdDmd [ if the_arg_id == id then evalDmd else absDmd
-                                    | id <- arg_ids ]
+                          mkProdDmd [ if name == sel_name then evalDmd else absDmd
+                                    | sel_name <- sel_names ]
 
+mkDictSelRhs :: Class
+             -> Int         -- 0-indexed selector among (superclasses ++ methods)
+             -> CoreExpr
+mkDictSelRhs clas val_index
+  = mkLams tyvars (Lam dict_id rhs_body)
+  where
     tycon      	   = classTyCon clas
     new_tycon  	   = isNewTyCon tycon
     [data_con] 	   = tyConDataCons tycon
     tyvars     	   = dataConUnivTyVars data_con
     arg_tys    	   = dataConRepArgTys data_con	-- Includes the dictionary superclasses
 
-    -- 'index' is a 0-index into the *value* arguments of the dictionary
-    val_index      = assoc "MkId.mkDictSelId" sel_index_prs name
-    sel_index_prs  = map idName (classAllSelIds clas) `zip` [0..]
-
     the_arg_id     = getNth arg_ids val_index
     pred       	   = mkClassPred clas (mkTyVarTys tyvars)
     dict_id    	   = mkTemplateLocal 1 pred
     arg_ids    	   = mkTemplateLocalsNum 2 arg_tys
 
-    rhs = mkLams tyvars  (Lam dict_id   rhs_body)
     rhs_body | new_tycon = unwrapNewTypeBody tycon (map mkTyVarTy tyvars) (Var dict_id)
              | otherwise = Case (Var dict_id) dict_id (idType the_arg_id)
                                 [(DataAlt data_con, arg_ids, varToCoreExpr the_arg_id)]
@@ -391,7 +391,7 @@ mkDataConWorkId wkr_name data_con
                 `setUnfoldingInfo`   evaldUnfolding  -- Record that it's evaluated,
                                                      -- even if arity = 0
 
-    wkr_sig = mkStrictSig (mkTopDmdType (replicate wkr_arity topDmd) (dataConCPR data_con))
+    wkr_sig = mkClosedStrictSig (replicate wkr_arity topDmd) (dataConCPR data_con)
         --      Note [Data-con worker strictness]
         -- Notice that we do *not* say the worker is strict
         -- even if the data constructor is declared strict
@@ -432,7 +432,7 @@ dataConCPR con
   , isVanillaDataCon con  -- No existentials 
   , wkr_arity > 0
   , wkr_arity <= mAX_CPR_SIZE
-  = if is_prod then cprProdRes 
+  = if is_prod then vanillaCprProdRes (dataConRepArity con)
                else cprSumRes (dataConTag con)
   | otherwise
   = topRes
@@ -495,7 +495,7 @@ mkDataConRep dflags fam_envs wrap_name data_con
                     	     -- does not tidy the IdInfo of implicit bindings (like the wrapper)
                     	     -- so it not make sure that the CAF info is sane
 
-    	     wrap_sig = mkStrictSig (mkTopDmdType wrap_arg_dmds (dataConCPR data_con))
+    	     wrap_sig = mkClosedStrictSig wrap_arg_dmds (dataConCPR data_con)
     	     wrap_arg_dmds = map mk_dmd (dropList eq_spec wrap_bangs)
     	     mk_dmd str | isBanged str = evalDmd
     	                | otherwise    = topDmd
@@ -605,7 +605,7 @@ dataConArgRep dflags fam_envs arg_ty
   | not (gopt Opt_OmitInterfacePragmas dflags) -- Don't unpack if -fomit-iface-pragmas
           -- Don't unpack if we aren't optimising; rather arbitrarily, 
           -- we use -fomit-iface-pragmas as the indication
-  , let mb_co   = topNormaliseType fam_envs arg_ty
+  , let mb_co   = topNormaliseType_maybe fam_envs arg_ty
                      -- Unwrap type families and newtypes
         arg_ty' = case mb_co of { Just (_,ty) -> ty; Nothing -> arg_ty }
   , isUnpackableType fam_envs arg_ty'
@@ -712,9 +712,7 @@ isUnpackableType fam_envs ty
   where
     ok_arg tcs (ty, bang) = not (attempt_unpack bang) || ok_ty tcs norm_ty
         where
-          norm_ty = case topNormaliseType fam_envs ty of
-                      Just (_, ty) -> ty
-                      Nothing      -> ty
+          norm_ty = topNormaliseType fam_envs ty
     ok_ty tcs ty
       | Just (tc, _) <- splitTyConApp_maybe ty
       , let tc_name = getName tc
@@ -946,7 +944,7 @@ mkFCallId dflags uniq fcall ty
     (_, tau)        = tcSplitForAllTys ty
     (arg_tys, _)    = tcSplitFunTys tau
     arity           = length arg_tys
-    strict_sig      = mkStrictSig (mkTopDmdType (replicate arity evalDmd) topRes)
+    strict_sig      = mkClosedStrictSig (replicate arity evalDmd) topRes
 \end{code}
 
 
@@ -956,29 +954,13 @@ mkFCallId dflags uniq fcall ty
 %*                                                                      *
 %************************************************************************
 
-Important notes about dict funs and default methods
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Note [Dict funs and default methods]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Dict funs and default methods are *not* ImplicitIds.  Their definition
 involves user-written code, so we can't figure out their strictness etc
 based on fixed info, as we can for constructors and record selectors (say).
 
-We build them as LocalIds, but with External Names.  This ensures that
-they are taken to account by free-variable finding and dependency
-analysis (e.g. CoreFVs.exprFreeVars).
-
-Why shouldn't they be bound as GlobalIds?  Because, in particular, if
-they are globals, the specialiser floats dict uses above their defns,
-which prevents good simplifications happening.  Also the strictness
-analyser treats a occurrence of a GlobalId as imported and assumes it
-contains strictness in its IdInfo, which isn't true if the thing is
-bound in the same module as the occurrence.
-
-It's OK for dfuns to be LocalIds, because we form the instance-env to
-pass on to the next module (md_insts) in CoreTidy, afer tidying
-and globalising the top-level Ids.
-
-BUT make sure they are *exported* LocalIds (mkExportedLocalId) so 
-that they aren't discarded by the occurrence analyser.
+NB: See also Note [Exported LocalIds] in Id
 
 \begin{code}
 mkDictFunId :: Name      -- Name to use for the dict fun;
@@ -988,12 +970,12 @@ mkDictFunId :: Name      -- Name to use for the dict fun;
             -> [Type]
             -> Id
 -- Implements the DFun Superclass Invariant (see TcInstDcls)
+-- See Note [Dict funs and default methods]
 
 mkDictFunId dfun_name tvs theta clas tys
-  = mkExportedLocalVar (DFunId n_silent is_nt)
-                       dfun_name
-                       dfun_ty
-                       vanillaIdInfo
+  = mkExportedLocalId (DFunId n_silent is_nt)
+                      dfun_name
+                      dfun_ty
   where
     is_nt = isNewTyCon (classTyCon clas)
     (n_silent, dfun_ty) = mkDictFunTy tvs theta clas tys
@@ -1038,25 +1020,41 @@ they can unify with both unlifted and lifted types.  Hence we provide
 another gun with which to shoot yourself in the foot.
 
 \begin{code}
-lazyIdName, unsafeCoerceName, nullAddrName, seqName, realWorldName, coercionTokenName, magicSingIName, coerceName, proxyName :: Name
-unsafeCoerceName  = mkWiredInIdName gHC_PRIM (fsLit "unsafeCoerce#") unsafeCoerceIdKey  unsafeCoerceId
-nullAddrName      = mkWiredInIdName gHC_PRIM (fsLit "nullAddr#")     nullAddrIdKey      nullAddrId
-seqName           = mkWiredInIdName gHC_PRIM (fsLit "seq")           seqIdKey           seqId
-realWorldName     = mkWiredInIdName gHC_PRIM (fsLit "realWorld#")    realWorldPrimIdKey realWorldPrimId
-lazyIdName        = mkWiredInIdName gHC_MAGIC (fsLit "lazy")         lazyIdKey           lazyId
-coercionTokenName = mkWiredInIdName gHC_PRIM (fsLit "coercionToken#") coercionTokenIdKey coercionTokenId
-magicSingIName    = mkWiredInIdName gHC_PRIM (fsLit "magicSingI")    magicSingIKey magicSingIId
-coerceName        = mkWiredInIdName gHC_PRIM (fsLit "coerce")        coerceKey          coerceId
-proxyName         = mkWiredInIdName gHC_PRIM (fsLit "proxy#")        proxyHashKey       proxyHashId
+lazyIdName, unsafeCoerceName, nullAddrName, seqName,
+   realWorldName, voidPrimIdName, coercionTokenName,
+   magicDictName, coerceName, proxyName, dollarName :: Name
+unsafeCoerceName  = mkWiredInIdName gHC_PRIM  (fsLit "unsafeCoerce#")  unsafeCoerceIdKey  unsafeCoerceId
+nullAddrName      = mkWiredInIdName gHC_PRIM  (fsLit "nullAddr#")      nullAddrIdKey      nullAddrId
+seqName           = mkWiredInIdName gHC_PRIM  (fsLit "seq")            seqIdKey           seqId
+realWorldName     = mkWiredInIdName gHC_PRIM  (fsLit "realWorld#")     realWorldPrimIdKey realWorldPrimId
+voidPrimIdName    = mkWiredInIdName gHC_PRIM  (fsLit "void#")          voidPrimIdKey      voidPrimId
+lazyIdName        = mkWiredInIdName gHC_MAGIC (fsLit "lazy")           lazyIdKey          lazyId
+coercionTokenName = mkWiredInIdName gHC_PRIM  (fsLit "coercionToken#") coercionTokenIdKey coercionTokenId
+magicDictName     = mkWiredInIdName gHC_PRIM  (fsLit "magicDict")      magicDictKey       magicDictId
+coerceName        = mkWiredInIdName gHC_PRIM  (fsLit "coerce")         coerceKey          coerceId
+proxyName         = mkWiredInIdName gHC_PRIM  (fsLit "proxy#")         proxyHashKey       proxyHashId
+dollarName        = mkWiredInIdName gHC_BASE  (fsLit "$")              dollarIdKey        dollarId
 \end{code}
 
 \begin{code}
+dollarId :: Id  -- Note [dollarId magic]
+dollarId = pcMiscPrelId dollarName ty
+             (noCafIdInfo `setUnfoldingInfo` unf)
+  where
+    fun_ty = mkFunTy alphaTy openBetaTy
+    ty     = mkForAllTys [alphaTyVar, openBetaTyVar] $
+             mkFunTy fun_ty fun_ty
+    unf    = mkInlineUnfolding (Just 2) rhs
+    [f,x]  = mkTemplateLocals [fun_ty, alphaTy]
+    rhs    = mkLams [alphaTyVar, openBetaTyVar, f, x] $
+             App (Var f) (Var x)
 
 ------------------------------------------------
 -- proxy# :: forall a. Proxy# a
 proxyHashId :: Id
 proxyHashId
-  = pcMiscPrelId proxyName ty noCafIdInfo
+  = pcMiscPrelId proxyName ty
+       (noCafIdInfo `setUnfoldingInfo` evaldUnfolding) -- Note [evaldUnfoldings]
   where
     ty      = mkForAllTys [kv, tv] (mkProxyPrimTy k t)
     kv      = kKiVar
@@ -1129,8 +1127,8 @@ lazyId = pcMiscPrelId lazyIdName ty info
 
 
 --------------------------------------------------------------------------------
-magicSingIId :: Id  -- See Note [magicSingIId magic]
-magicSingIId = pcMiscPrelId magicSingIName ty info
+magicDictId :: Id  -- See Note [magicDictId magic]
+magicDictId = pcMiscPrelId magicDictName ty info
   where
   info = noCafIdInfo `setInlinePragInfo` neverInlinePragma
   ty   = mkForAllTys [alphaTyVar] alphaTy
@@ -1142,15 +1140,33 @@ coerceId = pcMiscPrelId coerceName ty info
   where
     info = noCafIdInfo `setInlinePragInfo` alwaysInlinePragma
                        `setUnfoldingInfo`  mkCompulsoryUnfolding rhs
-    eqRTy = mkTyConApp coercibleTyCon [alphaTy, betaTy]
-    eqRPrimTy = mkTyConApp eqReprPrimTyCon [liftedTypeKind, alphaTy, betaTy]
-    ty   = mkForAllTys [alphaTyVar, betaTyVar] (mkFunTys [eqRTy, alphaTy] betaTy)
+    kv = kKiVar
+    k = mkTyVarTy kv
+    a:b:_ = tyVarList k
+    [aTy,bTy] = map mkTyVarTy [a,b]
+    eqRTy     = mkTyConApp coercibleTyCon  [k, aTy, bTy]
+    eqRPrimTy = mkTyConApp eqReprPrimTyCon [k, aTy, bTy]
+    ty   = mkForAllTys [kv, a, b] (mkFunTys [eqRTy, aTy] bTy)
 
-    [eqR,x,eq] = mkTemplateLocals [eqRTy, alphaTy,eqRPrimTy]
-    rhs = mkLams [alphaTyVar,betaTyVar,eqR,x] $
-          mkWildCase (Var eqR) eqRTy betaTy $
+    [eqR,x,eq] = mkTemplateLocals [eqRTy, aTy,eqRPrimTy]
+    rhs = mkLams [kv,a,b,eqR,x] $
+          mkWildCase (Var eqR) eqRTy bTy $
 	  [(DataAlt coercibleDataCon, [eq], Cast (Var x) (CoVarCo eq))]
 \end{code}
+
+Note [dollarId magic]
+~~~~~~~~~~~~~~~~~~~~~
+The only reason that ($) is wired in is so that its type can be
+    forall (a:*, b:Open). (a->b) -> a -> b
+That is, the return type can be unboxed.  E.g. this is OK
+    foo $ True    where  foo :: Bool -> Int#
+because ($) doesn't inspect or move the result of the call to foo.
+See Trac #8739.
+
+There is a special typing rule for ($) in TcExpr, so the type of ($)
+isn't looked at there, BUT Lint subsequently (and rightly) complains
+if sees ($) applied to Int# (say), unless we give it a wired-in type
+as we do here.
 
 Note [Unsafe coerce magic]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1244,42 +1260,49 @@ lazyId is defined in GHC.Base, so we don't *have* to inline it.  If it
 appears un-applied, we'll end up just calling it.
 
 
-Note [magicSingIId magic]
+Note [magicDictId magic]
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The identifier `magicSIngI` is just a place-holder, which is used to
+The identifier `magicDict` is just a place-holder, which is used to
 implement a primitve that we cannot define in Haskell but we can write
 in Core.  It is declared with a place-holder type:
 
-    magicSingI :: forall a. a
+    magicDict :: forall a. a
 
 The intention is that the identifier will be used in a very specific way,
-namely we add the following to the library:
+to create dictionaries for classes with a single method.  Consider a class
+like this:
 
-    withSingI :: Sing n -> (SingI n => a) -> a
-    withSingI x = magicSingI x ((\f -> f) :: () -> ())
+   class C a where
+     f :: T a
 
-The actual primitive is `withSingI`, and it uses its first argument
-(of type `Sing n`) as the evidece/dictionary in the second argument.
-This is done by adding a built-in rule to `prelude/PrelRules.hs`
-(see `match_magicSingI`), which works as follows:
+We are going to use `magicDict`, in conjunction with a built-in Prelude
+rule, to cast values of type `T a` into dictionaries for `C a`.  To do
+this, we define a function like this in the library:
 
-magicSingI @ (Sing n -> (() -> ()) -> (SingI n -> a) -> a)
-             x
-             (\f -> _)
+  data WrapC a b = WrapC (C a => Proxy a -> b)
 
+  withT :: (C a => Proxy a -> b)
+        ->  T a -> Proxy a -> b
+  withT f x y = magicDict (WrapC f) x y
+
+The purpose of `WrapC` is to avoid having `f` instantiated.
+Also, it avoids impredicativity, because `magicDict`'s type
+cannot be instantiated with a forall.  The field of `WrapC` contains
+a `Proxy` parameter which is used to link the type of the constraint,
+`C a`, with the type of the `Wrap` value being made.
+
+Next, we add a built-in Prelude rule (see prelude/PrelRules.hs),
+which will replace the RHS of this definition with the appropriate
+definition in Core.  The rewrite rule works as follows:
+
+magicDict@t (wrap@a@b f) x y
 ---->
+f (x `cast` co a) y
 
-\(f :: (SingI n -> a) -> a) -> f (cast x (newtypeCo n))
+The `co` coercion is the newtype-coercion extracted from the type-class.
+The type class is obtain by looking at the type of wrap.
 
-The `newtypeCo` coercion is extracted from the `SingI` type constructor,
-which is available in the instantiation.  We are casting `Sing n` into `SingI n`,
-which is OK because `SingI` is a class with a single methid,
-and thus it is implemented as newtype.
-
-The `(\f -> f)` parameter is there just so that we can avoid
-having to make up a new name for the lambda, it is completely
-changed by the rewrite.
 
 
 -------------------------------------------------------------
@@ -1289,23 +1312,30 @@ nasty as-is, change it back to a literal (@Literal@).
 voidArgId is a Local Id used simply as an argument in functions
 where we just want an arg to avoid having a thunk of unlifted type.
 E.g.
-        x = \ void :: State# RealWorld -> (# p, q #)
+        x = \ void :: Void# -> (# p, q #)
 
 This comes up in strictness analysis
 
-\begin{code}
-realWorldPrimId :: Id
-realWorldPrimId -- :: State# RealWorld
-  = pcMiscPrelId realWorldName realWorldStatePrimTy
-                 (noCafIdInfo `setUnfoldingInfo` evaldUnfolding)
-        -- The evaldUnfolding makes it look that realWorld# is evaluated
-        -- which in turn makes Simplify.interestingArg return True,
-        -- which in turn makes INLINE things applied to realWorld# likely
-        -- to be inlined
+Note [evaldUnfoldings]
+~~~~~~~~~~~~~~~~~~~~~~
+The evaldUnfolding makes it look that some primitive value is
+evaluated, which in turn makes Simplify.interestingArg return True,
+which in turn makes INLINE things applied to said value likely to be
+inlined.
 
-voidArgId :: Id
-voidArgId       -- :: State# RealWorld
-  = mkSysLocal (fsLit "void") voidArgIdKey realWorldStatePrimTy
+
+\begin{code}
+realWorldPrimId :: Id   -- :: State# RealWorld
+realWorldPrimId = pcMiscPrelId realWorldName realWorldStatePrimTy
+                     (noCafIdInfo `setUnfoldingInfo` evaldUnfolding    -- Note [evaldUnfoldings]
+                                  `setOneShotInfo` stateHackOneShot)
+
+voidPrimId :: Id     -- Global constant :: Void#
+voidPrimId  = pcMiscPrelId voidPrimIdName voidPrimTy
+                (noCafIdInfo `setUnfoldingInfo` evaldUnfolding)    -- Note [evaldUnfoldings]
+
+voidArgId :: Id       -- Local lambda-bound :: Void#
+voidArgId = mkSysLocal (fsLit "void") voidArgIdKey voidPrimTy
 
 coercionTokenId :: Id 	      -- :: () ~ ()
 coercionTokenId -- Used to replace Coercion terms when we go to STG

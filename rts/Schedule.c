@@ -393,7 +393,7 @@ schedule (Capability *initialCapability, Task *task)
 	 
 run_thread:
 
-    // CurrentTSO is the thread to run.  t might be different if we
+    // CurrentTSO is the thread to run. It might be different if we
     // loop back to run_thread, so make sure to set CurrentTSO after
     // that.
     cap->r.rCurrentTSO = t;
@@ -1082,7 +1082,7 @@ schedulePostRunThread (Capability *cap, StgTSO *t)
 }
 
 /* -----------------------------------------------------------------------------
- * Handle a thread that returned to the scheduler with ThreadHeepOverflow
+ * Handle a thread that returned to the scheduler with ThreadHeapOverflow
  * -------------------------------------------------------------------------- */
 
 static rtsBool
@@ -1802,6 +1802,10 @@ forkProcess(HsStablePtr *entry
         ACQUIRE_LOCK(&capabilities[i]->lock);
     }
 
+#ifdef THREADED_RTS
+    ACQUIRE_LOCK(&all_tasks_mutex);
+#endif
+
     stopTimer(); // See #4074
 
 #if defined(TRACING)
@@ -1823,13 +1827,18 @@ forkProcess(HsStablePtr *entry
             releaseCapability_(capabilities[i],rtsFalse);
             RELEASE_LOCK(&capabilities[i]->lock);
         }
+
+#ifdef THREADED_RTS
+        RELEASE_LOCK(&all_tasks_mutex);
+#endif
+
         boundTaskExiting(task);
 
 	// just return the pid
         return pid;
 	
     } else { // child
-	
+
 #if defined(THREADED_RTS)
         initMutex(&sched_mutex);
         initMutex(&sm_mutex);
@@ -1839,6 +1848,8 @@ forkProcess(HsStablePtr *entry
         for (i=0; i < n_capabilities; i++) {
             initMutex(&capabilities[i]->lock);
         }
+
+        initMutex(&all_tasks_mutex);
 #endif
 
 #ifdef TRACING

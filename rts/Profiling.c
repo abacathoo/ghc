@@ -66,7 +66,7 @@ Mutex ccs_mutex;
  * Built-in cost centres and cost-centre stacks:
  *
  *    MAIN   is the root of the cost-centre stack tree.  If there are
- *           no _scc_s in the program, all costs will be attributed
+ *           no {-# SCC #-}s in the program, all costs will be attributed
  *           to MAIN.
  *
  *    SYSTEM is the RTS in general (scheduler, etc.).  All costs for
@@ -619,10 +619,8 @@ actualPush_ (CostCentreStack *ccs, CostCentre *cc, CostCentreStack *new_ccs)
     ccsSetSelected(new_ccs);
 
     /* update the memoization table for the parent stack */
-    if (ccs != EMPTY_STACK) {
-        ccs->indexTable = addToIndexTable(ccs->indexTable, new_ccs, cc,
-                                          0/*not a back edge*/);
-    }
+    ccs->indexTable = addToIndexTable(ccs->indexTable, new_ccs, cc,
+                                      0/*not a back edge*/);
 
     /* return a pointer to the new stack */
     return new_ccs;

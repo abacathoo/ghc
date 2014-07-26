@@ -6,6 +6,8 @@
 Utility functions on @Core@ syntax
 
 \begin{code}
+{-# LANGUAGE CPP #-}
+
 -- | Commonly useful utilites for manipulating the Core language
 module CoreUtils (
         -- * Constructing expressions
@@ -31,7 +33,7 @@ module CoreUtils (
         CoreStats(..), coreBindsStats,
 
         -- * Equality
-        cheapEqExpr, eqExpr, eqExprX,
+        cheapEqExpr, eqExpr,
 
         -- * Eta reduction
         tryEtaReduce,
@@ -86,7 +88,10 @@ exprType :: CoreExpr -> Type
 exprType (Var var)           = idType var
 exprType (Lit lit)           = literalType lit
 exprType (Coercion co)       = coercionType co
-exprType (Let _ body)        = exprType body
+exprType (Let bind body)     
+  | NonRec tv rhs <- bind    -- See Note [Type bindings]
+  , Type ty <- rhs           = substTyWith [tv] [ty] (exprType body)
+  | otherwise                = exprType body
 exprType (Case _ _ ty _)     = ty
 exprType (Cast _ co)         = pSnd (coercionKind co)
 exprType (Tick _ e)          = exprType e
@@ -112,6 +117,15 @@ coreAltsType :: [CoreAlt] -> Type
 coreAltsType (alt:_) = coreAltType alt
 coreAltsType []      = panic "corAltsType"
 \end{code}
+
+Note [Type bindings]
+~~~~~~~~~~~~~~~~~~~~
+Core does allow type bindings, although such bindings are
+not much used, except in the output of the desuguarer.
+Example:
+     let a = Int in (\x:a. x)
+Given this, exprType must be careful to substitute 'a' in the 
+result type (Trac #8522).
 
 Note [Existential variables and silly type synonyms]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -178,7 +192,9 @@ applyTypeToArgs e op_ty args
 -- | Wrap the given expression in the coercion safely, dropping
 -- identity coercions and coalescing nested coercions
 mkCast :: CoreExpr -> Coercion -> CoreExpr
-mkCast e co | isReflCo co = e
+mkCast e co | ASSERT2( coercionRole co == Representational
+                     , ptext (sLit "coercion") <+> ppr co <+> ptext (sLit "passed to mkCast") <+> ppr e <+> ptext (sLit "has wrong role") <+> ppr (coercionRole co) )
+              isReflCo co = e
 
 mkCast (Coercion e_co) co 
   | isCoVarType (pSnd (coercionKind co))
@@ -201,7 +217,7 @@ mkCast expr co
 --    if to_ty `eqType` from_ty
 --    then expr
 --    else
-        WARN(not (from_ty `eqType` exprType expr), text "Trying to coerce" <+> text "(" <> ppr expr $$ text "::" <+> ppr (exprType expr) <> text ")" $$ ppr co $$ pprEqPred (coercionKind co))
+        WARN(not (from_ty `eqType` exprType expr), text "Trying to coerce" <+> text "(" <> ppr expr $$ text "::" <+> ppr (exprType expr) <> text ")" $$ ppr co $$ ppr (coercionType co))
          (Cast expr co)
 \end{code}
 
@@ -233,7 +249,7 @@ mkTick t expr@(App f arg)
     = if not (tickishCounts t)
          then tickHNFArgs t expr
          else if tickishScoped t && tickishCanSplit t
-                 then Tick (mkNoScope t) (tickHNFArgs (mkNoTick t) expr)
+                 then Tick (mkNoScope t) (tickHNFArgs (mkNoCount t) expr)
                  else Tick t expr
 
 mkTick t (Lam x e)
@@ -246,7 +262,7 @@ mkTick t (Lam x e)
      -- counting tick can probably be floated, and the lambda may then be
      -- in a position to be beta-reduced.
   | tickishScoped t && tickishCanSplit t
-         = Tick (mkNoScope t) (Lam x (mkTick (mkNoTick t) e))
+         = Tick (mkNoScope t) (Lam x (mkTick (mkNoCount t) e))
      -- just a counting tick: leave it on the outside
   | otherwise        = Tick t (Lam x e)
 
@@ -764,13 +780,10 @@ exprIsCheap' good_app (Tick t e)
      -- never duplicate ticks.  If we get this wrong, then HPC's entry
      -- counts will be off (check test in libraries/hpc/tests/raytrace)
 
-exprIsCheap' good_app (Let (NonRec x _) e)
-  | isUnLiftedType (idType x) = exprIsCheap' good_app e
-  | otherwise                 = False
-        -- Strict lets always have cheap right hand sides,
-        -- and do no allocation, so just look at the body
-        -- Non-strict lets do allocation so we don't treat them as cheap
-        -- See also
+exprIsCheap' good_app (Let (NonRec _ b) e)
+  = exprIsCheap' good_app b && exprIsCheap' good_app e
+exprIsCheap' good_app (Let (Rec prs) e)
+  = all (exprIsCheap' good_app . snd) prs && exprIsCheap' good_app e
 
 exprIsCheap' good_app other_expr        -- Applications and variables
   = go other_expr []
@@ -1211,7 +1224,7 @@ dataConInstPat :: [FastString]          -- A long enough list of FSs to use for 
                -> [Unique]              -- An equally long list of uniques, at least one for each binder
                -> DataCon
                -> [Type]                -- Types to instantiate the universally quantified tyvars
-               -> ([TyVar], [Id])          -- Return instantiated variables
+               -> ([TyVar], [Id])       -- Return instantiated variables
 -- dataConInstPat arg_fun fss us con inst_tys returns a triple
 -- (ex_tvs, arg_ids),
 --
@@ -1239,14 +1252,14 @@ dataConInstPat :: [FastString]          -- A long enough list of FSs to use for 
 --
 --  where the double-primed variables are created with the FastStrings and
 --  Uniques given as fss and us
-dataConInstPat fss uniqs con inst_tys 
+dataConInstPat fss uniqs con inst_tys
   = ASSERT( univ_tvs `equalLength` inst_tys )
     (ex_bndrs, arg_ids)
-  where 
+  where
     univ_tvs = dataConUnivTyVars con
     ex_tvs   = dataConExTyVars con
     arg_tys  = dataConRepArgTys con
-
+    arg_strs = dataConRepStrictness con  -- 1-1 with arg_tys
     n_ex = length ex_tvs
 
       -- split the Uniques and FastStrings
@@ -1257,7 +1270,7 @@ dataConInstPat fss uniqs con inst_tys
     univ_subst = zipOpenTvSubst univ_tvs inst_tys
 
       -- Make existential type variables, applyingn and extending the substitution
-    (full_subst, ex_bndrs) = mapAccumL mk_ex_var univ_subst 
+    (full_subst, ex_bndrs) = mapAccumL mk_ex_var univ_subst
                                        (zip3 ex_tvs ex_fss ex_uniqs)
 
     mk_ex_var :: TvSubst -> (TyVar, FastString, Unique) -> (TvSubst, TyVar)
@@ -1269,10 +1282,29 @@ dataConInstPat fss uniqs con inst_tys
         kind     = Type.substTy subst (tyVarKind tv)
 
       -- Make value vars, instantiating types
-    arg_ids = zipWith3 mk_id_var id_uniqs id_fss arg_tys
-    mk_id_var uniq fs ty = mkUserLocal (mkVarOccFS fs) uniq 
-                                       (Type.substTy full_subst ty) noSrcSpan
+    arg_ids = zipWith4 mk_id_var id_uniqs id_fss arg_tys arg_strs
+    mk_id_var uniq fs ty str
+      = mkLocalIdWithInfo name (Type.substTy full_subst ty) info
+      where
+        name = mkInternalName uniq (mkVarOccFS fs) noSrcSpan
+        info | isMarkedStrict str = vanillaIdInfo `setUnfoldingInfo` evaldUnfolding
+             | otherwise          = vanillaIdInfo
+             -- See Note [Mark evaluated arguments]
 \end{code}
+
+Note [Mark evaluated arguments]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When pattern matching on a constructor with strict fields, the binder
+can have an 'evaldUnfolding'.  Moreover, it *should* have one, so that
+when loading an interface file unfolding like:
+  data T = MkT !Int
+  f x = case x of { MkT y -> let v::Int# = case y of I# n -> n+1
+                             in ... }
+we don't want Lint to complain.  The 'y' is evaluated, so the
+case in the RHS of the binding for 'v' is fine.  But only if we
+*know* that 'y' is evaluated.
+
+c.f. add_evals in Simplify.simplAlt
 
 %************************************************************************
 %*                                                                      *
@@ -1319,43 +1351,18 @@ exprIsBig _            = True
 eqExpr :: InScopeSet -> CoreExpr -> CoreExpr -> Bool
 -- Compares for equality, modulo alpha
 eqExpr in_scope e1 e2
-  = eqExprX id_unf (mkRnEnv2 in_scope) e1 e2
-  where
-    id_unf _ = noUnfolding      -- Don't expand
-\end{code}
-
-\begin{code}
-eqExprX :: IdUnfoldingFun -> RnEnv2 -> CoreExpr -> CoreExpr -> Bool
--- ^ Compares expressions for equality, modulo alpha.
--- Does /not/ look through newtypes or predicate types
--- Used in rule matching, and also CSE
-
-eqExprX id_unfolding_fun env e1 e2
-  = go env e1 e2
+  = go (mkRnEnv2 in_scope) e1 e2
   where
     go env (Var v1) (Var v2)
       | rnOccL env v1 == rnOccR env v2
       = True
-
-    -- The next two rules expand non-local variables
-    -- C.f. Note [Expanding variables] in Rules.lhs
-    -- and  Note [Do not expand locally-bound variables] in Rules.lhs
-    go env (Var v1) e2
-      | not (locallyBoundL env v1)
-      , Just e1' <- expandUnfolding_maybe (id_unfolding_fun (lookupRnInScope env v1))
-      = go (nukeRnEnvL env) e1' e2
-
-    go env e1 (Var v2)
-      | not (locallyBoundR env v2)
-      , Just e2' <- expandUnfolding_maybe (id_unfolding_fun (lookupRnInScope env v2))
-      = go (nukeRnEnvR env) e1 e2'
 
     go _   (Lit lit1)    (Lit lit2)      = lit1 == lit2
     go env (Type t1)    (Type t2)        = eqTypeX env t1 t2
     go env (Coercion co1) (Coercion co2) = coreEqCoercion2 env co1 co2
     go env (Cast e1 co1) (Cast e2 co2) = coreEqCoercion2 env co1 co2 && go env e1 e2
     go env (App f1 a1)   (App f2 a2)   = go env f1 f2 && go env a1 a2
-    go env (Tick n1 e1)  (Tick n2 e2)  = go_tickish n1 n2 && go env e1 e2
+    go env (Tick n1 e1)  (Tick n2 e2)  = go_tickish env n1 n2 && go env e1 e2
 
     go env (Lam b1 e1)  (Lam b2 e2)
       =  eqTypeX env (varType b1) (varType b2)   -- False for Id/TyVar combination
@@ -1385,19 +1392,10 @@ eqExprX id_unfolding_fun env e1 e2
       = c1 == c2 && go (rnBndrs2 env bs1 bs2) e1 e2
 
     -----------
-    go_tickish (Breakpoint lid lids) (Breakpoint rid rids)
+    go_tickish env (Breakpoint lid lids) (Breakpoint rid rids)
       = lid == rid  &&  map (rnOccL env) lids == map (rnOccR env) rids
-    go_tickish l r = l == r
+    go_tickish _ l r = l == r
 \end{code}
-
-Auxiliary functions
-
-\begin{code}
-locallyBoundL, locallyBoundR :: RnEnv2 -> Var -> Bool
-locallyBoundL rn_env v = inRnEnvL rn_env v
-locallyBoundR rn_env v = inRnEnvR rn_env v
-\end{code}
-
 
 %************************************************************************
 %*                                                                      *

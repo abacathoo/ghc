@@ -99,8 +99,6 @@ endif
 	@echo 'cGhcEnableTablesNextToCode = "$(GhcEnableTablesNextToCode)"' >> $@
 	@echo 'cLeadingUnderscore    :: String'                             >> $@
 	@echo 'cLeadingUnderscore    = "$(LeadingUnderscore)"'              >> $@
-	@echo 'cRAWCPP_FLAGS         :: String'                             >> $@
-	@echo 'cRAWCPP_FLAGS         = "$(RAWCPP_FLAGS)"'                   >> $@
 	@echo 'cGHC_UNLIT_PGM        :: String'                             >> $@
 	@echo 'cGHC_UNLIT_PGM        = "$(utils/unlit_dist_PROG)"'          >> $@
 	@echo 'cGHC_SPLIT_PGM        :: String'                             >> $@
@@ -110,12 +108,6 @@ ifeq "$(UseLibFFIForAdjustors)" "YES"
 	@echo 'cLibFFI               = True'                                >> $@
 else
 	@echo 'cLibFFI               = False'                               >> $@
-endif
-	@echo 'cDYNAMIC_GHC_PROGRAMS :: Bool'                               >> $@
-ifeq "$(DYNAMIC_GHC_PROGRAMS)" "YES"
-	@echo 'cDYNAMIC_GHC_PROGRAMS = True'                                >> $@
-else
-	@echo 'cDYNAMIC_GHC_PROGRAMS = False'                               >> $@
 endif
 # Note that GhcThreaded just reflects the Makefile variable setting.
 # In particular, the stage1 compiler is never actually compiled with
@@ -359,6 +351,11 @@ else
 compiler_CONFIGURE_OPTS += --ghc-option=-DNO_REGS
 endif
 
+ifneq "$(GhcWithSMP)" "YES"
+compiler_CONFIGURE_OPTS += --ghc-option=-DNOSMP
+compiler_CONFIGURE_OPTS += --ghc-option=-optc-DNOSMP
+endif
+
 # Careful optimisation of the parser: we don't want to throw everything
 # at it, because that takes too long and doesn't buy much, but we do want
 # to inline certain key external functions, so we instruct GHC not to
@@ -457,7 +454,173 @@ compiler_stage3_SplitObjs = NO
 # We therefore need to split some of the modules off into a separate
 # DLL. This clump are the modules reachable from DynFlags:
 compiler_stage2_dll0_START_MODULE = DynFlags
-compiler_stage2_dll0_MODULES = Annotations Avail Bag BasicTypes BinIface Binary Bitmap BlockId BooleanFormula BreakArray BufWrite BuildTyCl ByteCodeAsm ByteCodeInstr ByteCodeItbls CLabel Class CmdLineParser Cmm CmmCallConv CmmExpr CmmInfo CmmMachOp CmmNode CmmType CmmUtils CoAxiom CodeGen.Platform CodeGen.Platform.ARM CodeGen.Platform.NoRegs CodeGen.Platform.PPC CodeGen.Platform.PPC_Darwin CodeGen.Platform.SPARC CodeGen.Platform.X86 CodeGen.Platform.X86_64 Coercion Config Constants CoreArity CoreFVs CoreLint CoreSubst CoreSyn CoreTidy CoreUnfold CoreUtils CostCentre DataCon Demand Digraph DriverPhases DsMonad DynFlags Encoding ErrUtils Exception ExtsCompat46 FamInst FamInstEnv FastBool FastFunctions FastMutInt FastString FastTypes Finder Fingerprint FiniteMap ForeignCall Hooks Hoopl Hoopl.Dataflow HsBinds HsDecls HsDoc HsExpr HsImpExp HsLit HsPat HsSyn HsTypes HsUtils HscTypes IOEnv Id IdInfo IfaceEnv IfaceSyn IfaceType InstEnv InteractiveEvalTypes Kind ListSetOps Literal LoadIface Maybes MkCore MkGraph MkId Module MonadUtils Name NameEnv NameSet OccName OccurAnal OptCoercion OrdList Outputable PackageConfig Packages Pair Panic PipelineMonad Platform PlatformConstants PprCmm PprCmmDecl PprCmmExpr PprCore PrelInfo PrelNames PrelRules Pretty PrimOp RdrName Reg RegClass Rules SMRep Serialized SrcLoc StaticFlags StgCmmArgRep StgCmmClosure StgCmmEnv StgCmmLayout StgCmmMonad StgCmmProf StgCmmTicky StgCmmUtils StgSyn Stream StringBuffer TcEvidence TcIface TcMType TcRnMonad TcRnTypes TcType TcTypeNats TrieMap TyCon Type TypeRep TysPrim TysWiredIn Unify UniqFM UniqSet UniqSupply Unique Util Var VarEnv VarSet BacktraceTypes
+compiler_stage2_dll0_MODULES = \
+	Annotations \
+	Avail \
+	Bag \
+	BacktraceTypes \
+	BasicTypes \
+	BinIface \
+	Binary \
+	Bitmap \
+	BlockId \
+	BooleanFormula \
+	BreakArray \
+	BufWrite \
+	BuildTyCl \
+	ByteCodeAsm \
+	ByteCodeInstr \
+	ByteCodeItbls \
+	CLabel \
+	Class \
+	CmdLineParser \
+	Cmm \
+	CmmCallConv \
+	CmmExpr \
+	CmmInfo \
+	CmmMachOp \
+	CmmNode \
+	CmmType \
+	CmmUtils \
+	CoAxiom \
+	ConLike \
+	CodeGen.Platform \
+	CodeGen.Platform.ARM \
+	CodeGen.Platform.NoRegs \
+	CodeGen.Platform.PPC \
+	CodeGen.Platform.PPC_Darwin \
+	CodeGen.Platform.SPARC \
+	CodeGen.Platform.X86 \
+	CodeGen.Platform.X86_64 \
+	Coercion \
+	Config \
+	Constants \
+	CoreArity \
+	CoreFVs \
+	CoreLint \
+	CoreSubst \
+	CoreSyn \
+	CoreTidy \
+	CoreUnfold \
+	CoreUtils \
+	CostCentre \
+	DataCon \
+	Demand \
+	Digraph \
+	DriverPhases \
+	DsMonad \
+	DynFlags \
+	Encoding \
+	ErrUtils \
+	Exception \
+	ExtsCompat46 \
+	FamInstEnv \
+	FastBool \
+	FastFunctions \
+	FastMutInt \
+	FastString \
+	FastTypes \
+	Finder \
+	Fingerprint \
+	FiniteMap \
+	ForeignCall \
+	Hooks \
+	Hoopl \
+	Hoopl.Dataflow \
+	HsBinds \
+	HsDecls \
+	HsDoc \
+	HsExpr \
+	HsImpExp \
+	HsLit \
+	HsPat \
+	HsSyn \
+	HsTypes \
+	HsUtils \
+	HscTypes \
+	IOEnv \
+	Id \
+	IdInfo \
+	IfaceEnv \
+	IfaceSyn \
+	IfaceType \
+	InstEnv \
+	InteractiveEvalTypes \
+	Kind \
+	ListSetOps \
+	Literal \
+	LoadIface \
+	Maybes \
+	MkCore \
+	MkGraph \
+	MkId \
+	Module \
+	MonadUtils \
+	Name \
+	NameEnv \
+	NameSet \
+	OccName \
+	OccurAnal \
+	OptCoercion \
+	OrdList \
+	Outputable \
+	PackageConfig \
+	Packages \
+	Pair \
+	Panic \
+	PatSyn \
+	PipelineMonad \
+	Platform \
+	PlatformConstants \
+	PprCmm \
+	PprCmmDecl \
+	PprCmmExpr \
+	PprCore \
+	PrelInfo \
+	PrelNames \
+	PrelRules \
+	Pretty \
+	PrimOp \
+	RdrName \
+	Reg \
+	RegClass \
+	Rules \
+	SMRep \
+	Serialized \
+	SrcLoc \
+	StaticFlags \
+	StgCmmArgRep \
+	StgCmmClosure \
+	StgCmmEnv \
+	StgCmmLayout \
+	StgCmmMonad \
+	StgCmmProf \
+	StgCmmTicky \
+	StgCmmUtils \
+	StgSyn \
+	Stream \
+	StringBuffer \
+	TcEvidence \
+	TcIface \
+	TcRnMonad \
+	TcRnTypes \
+	TcType \
+	TcTypeNats \
+	TrieMap \
+	TyCon \
+	Type \
+	TypeRep \
+	TysPrim \
+	TysWiredIn \
+	Unify \
+	UniqFM \
+	UniqSet \
+	UniqSupply \
+	Unique \
+	Util \
+	Var \
+	VarEnv \
+	VarSet
 
 compiler_stage2_dll0_HS_OBJS = \
     $(patsubst %,compiler/stage2/build/%.$(dyn_osuf),$(subst .,/,$(compiler_stage2_dll0_MODULES)))
@@ -503,9 +666,9 @@ compiler_stage2_CONFIGURE_OPTS += --disable-library-for-ghci
 compiler_stage3_CONFIGURE_OPTS += --disable-library-for-ghci
 
 # after build-package, because that sets compiler_stage1_HC_OPTS:
-compiler_stage1_HC_OPTS += $(GhcStage1HcOpts)
-compiler_stage2_HC_OPTS += $(GhcStage2HcOpts)
-compiler_stage3_HC_OPTS += $(GhcStage3HcOpts)
+compiler_stage1_HC_OPTS += $(GhcHcOpts) $(GhcStage1HcOpts)
+compiler_stage2_HC_OPTS += $(GhcHcOpts) $(GhcStage2HcOpts)
+compiler_stage3_HC_OPTS += $(GhcHcOpts) $(GhcStage3HcOpts)
 
 ifneq "$(BINDIST)" "YES"
 

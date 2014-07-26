@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 -----------------------------------------------------------------------------
 --
 -- Stg to C-- code generation
@@ -39,7 +41,6 @@ import DataCon
 import Name
 import TyCon
 import Module
-import ErrUtils
 import Outputable
 import Stream
 import BasicTypes
@@ -63,9 +64,7 @@ codeGen :: DynFlags
 
 codeGen dflags this_mod data_tycons
         cost_centre_info stg_binds hpc_info modTracepoints
-  = do  { liftIO $ showPass dflags "New CodeGen"
-
-              -- cg: run the code generator, and yield the resulting CmmGroup
+  = do  {     -- cg: run the code generator, and yield the resulting CmmGroup
               -- Using an IORef to store the state is a bit crude, but otherwise
               -- we would need to add a state monad layer.
         ; cgref <- liftIO $ newIORef =<< initC
@@ -238,7 +237,12 @@ cgDataCon data_con
                              $ mk_code ticky_code
 
             mk_code ticky_code
-              =         -- NB: We don't set CC when entering data (WDP 94/06)
+              = -- NB: the closure pointer is assumed *untagged* on
+                -- entry to a constructor.  If the pointer is tagged,
+                -- then we should not be entering it.  This assumption
+                -- is used in ldvEnter and when tagging the pointer to
+                -- return it.
+                -- NB 2: We don't set CC when entering data (WDP 94/06)
                 do { _ <- ticky_code
                    ; ldvEnter (CmmReg nodeReg)
                    ; tickyReturnOldCon (length arg_things)

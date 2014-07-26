@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP, GADTs #-}
+
 -----------------------------------------------------------------------------
 --
 -- Pretty-printing of Cmm as C, suitable for feeding gcc
@@ -16,7 +18,6 @@
 --
 -----------------------------------------------------------------------------
 
-{-# LANGUAGE GADTs #-}
 module PprC (
         writeCs,
         pprStringInCStyle
@@ -55,8 +56,8 @@ import qualified Data.Map as Map
 import Control.Monad (liftM, ap)
 import Control.Applicative (Applicative(..))
 
-import Data.Array.Unsafe ( castSTUArray )
-import Data.Array.ST hiding ( castSTUArray )
+import qualified Data.Array.Unsafe as U ( castSTUArray )
+import Data.Array.ST
 
 -- --------------------------------------------------------------------------
 -- Top level
@@ -221,6 +222,7 @@ pprStmt stmt =
                         -- for a dynamic call, no declaration is necessary.
 
     CmmUnsafeForeignCall (PrimTarget MO_Touch) _results _args -> empty
+    CmmUnsafeForeignCall (PrimTarget (MO_Prefetch_Data _)) _results _args -> empty
 
     CmmUnsafeForeignCall target@(PrimTarget op) results args ->
         fn_call
@@ -751,6 +753,10 @@ pprCallishMachOp_for_C mop
         MO_Memmove      -> ptext (sLit "memmove")
         (MO_BSwap w)    -> ptext (sLit $ bSwapLabel w)
         (MO_PopCnt w)   -> ptext (sLit $ popCntLabel w)
+        (MO_AtomicRMW w amop) -> ptext (sLit $ atomicRMWLabel w amop)
+        (MO_Cmpxchg w)  -> ptext (sLit $ cmpxchgLabel w)
+        (MO_AtomicRead w)  -> ptext (sLit $ atomicReadLabel w)
+        (MO_AtomicWrite w) -> ptext (sLit $ atomicWriteLabel w)
         (MO_UF_Conv w)  -> ptext (sLit $ word2FloatLabel w)
 
         MO_S_QuotRem  {} -> unsupported
@@ -1166,10 +1172,10 @@ big_doubles dflags
   | otherwise = panic "big_doubles"
 
 castFloatToIntArray :: STUArray s Int Float -> ST s (STUArray s Int Int)
-castFloatToIntArray = castSTUArray
+castFloatToIntArray = U.castSTUArray
 
 castDoubleToIntArray :: STUArray s Int Double -> ST s (STUArray s Int Int)
-castDoubleToIntArray = castSTUArray
+castDoubleToIntArray = U.castSTUArray
 
 -- floats are always 1 word
 floatToWord :: DynFlags -> Rational -> CmmLit

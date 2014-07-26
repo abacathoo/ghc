@@ -35,17 +35,23 @@ module BasicTypes(
         compareFixity,
 
         RecFlag(..), isRec, isNonRec, boolToRecFlag,
+        Origin(..), isGenerated,
 
         RuleName,
 
         TopLevelFlag(..), isTopLevel, isNotTopLevel,
 
-        OverlapFlag(..),
+        OverlapFlag(..), OverlapMode(..), setOverlapModeMaybe,
 
         Boxity(..), isBoxed,
 
         TupleSort(..), tupleSortBoxity, boxityNormalTupleSort,
         tupleParens,
+
+        -- ** The OneShotInfo type
+        OneShotInfo(..),
+        noOneShotInfo, hasNoOneShotInfo, isOneShotInfo,
+        bestOneShot, worstOneShot,
 
         OccInfo(..), seqOccInfo, zapFragileOcc, isOneOcc,
         isDeadOcc, isStrongLoopBreaker, isWeakLoopBreaker, isNoOcc,
@@ -58,7 +64,7 @@ module BasicTypes(
         EP(..),
 
         DefMethSpec(..),
-        SwapFlag(..), flipSwap, unSwap,
+        SwapFlag(..), flipSwap, unSwap, isSwapped,
 
         CompilerPhase(..), PhaseNum,
         Activation(..), isActive, isActiveIn,
@@ -136,6 +142,56 @@ type Alignment = Int -- align to next N-byte boundary (N must be a power of 2).
 
 %************************************************************************
 %*                                                                      *
+         One-shot information
+%*                                                                      *
+%************************************************************************
+
+\begin{code}
+-- | If the 'Id' is a lambda-bound variable then it may have lambda-bound
+-- variable info. Sometimes we know whether the lambda binding this variable
+-- is a \"one-shot\" lambda; that is, whether it is applied at most once.
+--
+-- This information may be useful in optimisation, as computations may
+-- safely be floated inside such a lambda without risk of duplicating
+-- work.
+data OneShotInfo = NoOneShotInfo -- ^ No information
+                 | ProbOneShot   -- ^ The lambda is probably applied at most once
+                 | OneShotLam    -- ^ The lambda is applied at most once.
+
+-- | It is always safe to assume that an 'Id' has no lambda-bound variable information
+noOneShotInfo :: OneShotInfo
+noOneShotInfo = NoOneShotInfo
+
+isOneShotInfo, hasNoOneShotInfo :: OneShotInfo -> Bool
+isOneShotInfo OneShotLam = True
+isOneShotInfo _          = False
+
+hasNoOneShotInfo NoOneShotInfo = True
+hasNoOneShotInfo _             = False
+
+worstOneShot, bestOneShot :: OneShotInfo -> OneShotInfo -> OneShotInfo
+worstOneShot NoOneShotInfo _             = NoOneShotInfo
+worstOneShot ProbOneShot   NoOneShotInfo = NoOneShotInfo
+worstOneShot ProbOneShot   _             = ProbOneShot
+worstOneShot OneShotLam    os            = os
+
+bestOneShot NoOneShotInfo os         = os
+bestOneShot ProbOneShot   OneShotLam = OneShotLam
+bestOneShot ProbOneShot   _          = ProbOneShot
+bestOneShot OneShotLam    _          = OneShotLam
+
+pprOneShotInfo :: OneShotInfo -> SDoc
+pprOneShotInfo NoOneShotInfo = empty
+pprOneShotInfo ProbOneShot   = ptext (sLit "ProbOneShot")
+pprOneShotInfo OneShotLam    = ptext (sLit "OneShot")
+
+instance Outputable OneShotInfo where
+    ppr = pprOneShotInfo
+\end{code}
+
+
+%************************************************************************
+%*                                                                      *
            Swap flag
 %*                                                                      *
 %************************************************************************
@@ -152,6 +208,10 @@ instance Outputable SwapFlag where
 flipSwap :: SwapFlag -> SwapFlag
 flipSwap IsSwapped  = NotSwapped
 flipSwap NotSwapped = IsSwapped
+
+isSwapped :: SwapFlag -> Bool
+isSwapped IsSwapped  = True
+isSwapped NotSwapped = False
 
 unSwap :: SwapFlag -> (a->a->b) -> a -> a -> b
 unSwap NotSwapped f a b = f a b
@@ -360,6 +420,25 @@ instance Outputable RecFlag where
 
 %************************************************************************
 %*                                                                      *
+                Code origin
+%*                                                                      *
+%************************************************************************
+\begin{code}
+data Origin = FromSource
+            | Generated
+            deriving( Eq, Data, Typeable )
+
+isGenerated :: Origin -> Bool
+isGenerated Generated = True
+isGenerated FromSource = False
+
+instance Outputable Origin where
+  ppr FromSource  = ptext (sLit "FromSource")
+  ppr Generated   = ptext (sLit "Generated")
+\end{code}
+
+%************************************************************************
+%*                                                                      *
                 Instance overlap flag
 %*                                                                      *
 %************************************************************************
@@ -368,9 +447,19 @@ instance Outputable RecFlag where
 -- | The semantics allowed for overlapping instances for a particular
 -- instance. See Note [Safe Haskell isSafeOverlap] (in `InstEnv.lhs`) for a
 -- explanation of the `isSafeOverlap` field.
-data OverlapFlag
+data OverlapFlag = OverlapFlag
+  { overlapMode   :: OverlapMode
+  , isSafeOverlap :: Bool
+  } deriving (Eq, Data, Typeable)
+
+setOverlapModeMaybe :: OverlapFlag -> Maybe OverlapMode -> OverlapFlag
+setOverlapModeMaybe f Nothing  = f
+setOverlapModeMaybe f (Just m) = f { overlapMode = m }
+
+
+data OverlapMode
   -- | This instance must not overlap another
-  = NoOverlap { isSafeOverlap :: Bool }
+  = NoOverlap
 
   -- | Silently ignore this instance if you find a
   -- more specific one that matches the constraint
@@ -382,7 +471,7 @@ data OverlapFlag
   -- Since the second instance has the OverlapOk flag,
   -- the first instance will be chosen (otherwise
   -- its ambiguous which to choose)
-  | OverlapOk { isSafeOverlap :: Bool }
+  | OverlapOk
 
   -- | Silently ignore this instance if you find any other that matches the
   -- constraing you are trying to resolve, including when checking if there are
@@ -394,13 +483,16 @@ data OverlapFlag
   -- Without the Incoherent flag, we'd complain that
   -- instantiating 'b' would change which instance
   -- was chosen. See also note [Incoherent instances]
-  | Incoherent { isSafeOverlap :: Bool }
+  | Incoherent
   deriving (Eq, Data, Typeable)
 
 instance Outputable OverlapFlag where
-   ppr (NoOverlap  b) = empty <+> pprSafeOverlap b
-   ppr (OverlapOk  b) = ptext (sLit "[overlap ok]") <+> pprSafeOverlap b
-   ppr (Incoherent b) = ptext (sLit "[incoherent]") <+> pprSafeOverlap b
+   ppr flag = ppr (overlapMode flag) <+> pprSafeOverlap (isSafeOverlap flag)
+
+instance Outputable OverlapMode where
+   ppr NoOverlap  = empty
+   ppr OverlapOk  = ptext (sLit "[overlap ok]")
+   ppr Incoherent = ptext (sLit "[incoherent]")
 
 pprSafeOverlap :: Bool -> SDoc
 pprSafeOverlap True  = ptext $ sLit "[safe]"
@@ -487,7 +579,7 @@ defn of OccInfo here, safely at the bottom
 \begin{code}
 -- | Identifier occurrence information
 data OccInfo
-  = NoOccInfo           -- ^ There are many occurrences, or unknown occurences
+  = NoOccInfo           -- ^ There are many occurrences, or unknown occurrences
 
   | IAmDead             -- ^ Marks unused variables.  Sometimes useful for
                         -- lambda and case-bound variables.

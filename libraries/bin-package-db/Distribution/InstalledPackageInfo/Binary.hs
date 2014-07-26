@@ -1,11 +1,10 @@
-{-# LANGUAGE CPP, RecordWildCards, TypeSynonymInstances, StandaloneDeriving, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards, Trustworthy, TypeSynonymInstances, StandaloneDeriving,
+             GeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 -- This module deliberately defines orphan instances for now. Should
 -- become unnecessary once we move to using the binary package properly:
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-#if __GLASGOW_HASKELL__ >= 701
-{-# LANGUAGE Trustworthy #-}
-#endif
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Distribution.InstalledPackageInfo.Binary
@@ -23,6 +22,7 @@ module Distribution.InstalledPackageInfo.Binary (
 import Distribution.Version
 import Distribution.Package hiding (depends)
 import Distribution.License
+import Distribution.ModuleExport
 import Distribution.InstalledPackageInfo as IPI
 import Data.Binary as Bin
 import Control.Exception as Exception
@@ -61,6 +61,7 @@ putInstalledPackageInfo ipi = do
   put (category ipi)
   put (exposed ipi)
   put (exposedModules ipi)
+  put (reexportedModules ipi)
   put (hiddenModules ipi)
   put (trusted ipi)
   put (importDirs ipi)
@@ -95,6 +96,7 @@ getInstalledPackageInfo = do
   category <- get
   exposed <- get
   exposedModules <- get
+  reexportedModules <- get
   hiddenModules <- get
   trusted <- get
   importDirs <- get
@@ -132,7 +134,9 @@ instance Binary License where
   put OtherLicense         = do putWord8 7
   put (Apache v)           = do putWord8 8; put v
   put (AGPL v)             = do putWord8 9; put v
-  put (UnknownLicense str) = do putWord8 10; put str
+  put BSD2                 = do putWord8 10
+  put (MPL v)              = do putWord8 11; put v
+  put (UnknownLicense str) = do putWord8 12; put str
 
   get = do
     n <- getWord8
@@ -147,6 +151,8 @@ instance Binary License where
       7 -> return OtherLicense
       8 -> do v <- get; return (Apache v)
       9 -> do v <- get; return (AGPL v)
+      10 -> return BSD2
+      11 -> do v <- get; return (MPL v)
       _ -> do str <- get; return (UnknownLicense str)
 
 instance Binary Version where
@@ -155,3 +161,8 @@ instance Binary Version where
 
 deriving instance Binary PackageName
 deriving instance Binary InstalledPackageId
+
+instance Binary m => Binary (ModuleExport m) where
+  put (ModuleExport a b c d) = do put a; put b; put c; put d
+  get = do a <- get; b <- get; c <- get; d <- get;
+           return (ModuleExport a b c d)
